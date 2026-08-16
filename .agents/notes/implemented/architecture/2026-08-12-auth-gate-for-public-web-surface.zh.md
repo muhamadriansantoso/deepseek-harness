@@ -55,9 +55,9 @@ token 形如 `base64url(payload).base64url(hmac)`，其中 payload 是 `{ userId
 
 **`ApiTrustFenceRequest` 类型浏览器兼容。** 它用 `Record<string, string | string[] | undefined> | Headers` 而非 `IncomingHttpHeaders`，于是 `rpc.ts`（Host 与 Client 两半共享）不会把 `node:http` 拉进浏览器 bundle。
 
-**特权方法保持 loopback 绑定。** `PRIVILEGED_METHODS` 集合（settings、credentials、preset 管理、`host.openPath`、`llm.discoverModels`）仍以空信任列表 gate 到 loopback。认证不放松它——一个非 loopback 的已认证用户仍无法触达特权方法。这是纵深防御。
+**特权方法现在是 role-gated（Task #8，2026-08-16）。** `packages/client/connection/src/index.ts:156-159` 处的 `PRIVILEGED_METHODS` loopback 固定（`isTrustedApiRequest(req, [])`）已替换为 admin gate `authSimpleHook.role !== 'admin' && !isTrustedApiRequest(req, [])`。已认证的 `admin` 在任何 origin 上解锁；loopback 对任何人仍通过；非 admin 的非 loopback 仍为 403（纵深防御）。role 载体是 `packages/util/principal` 中一个平行的 `AsyncLocalStorage<Role|undefined>`（Option B——`Principal = string|undefined` 保持字节相同）。扩展：`ConnectionAuthResult` 与 `SessionPayload` 携带 `{userId, role}`；`ConnectionAuthResult` 兼容旧的 `string`/`true`；`verifySession` 对无 role 的 token 默认为 `'user'`。新的 bundle 入口 `packages/client/ui-admin` 注册一个以 `GET /api/auth/me` 的 `role` 为 gate 的 Admin `settings.section` slot（`packages/auth/auth-simple/src/index.ts:489 handleAdminRoute` 在服务端再校验）与一个持久的侧栏 `sidebar.footer.action` 登出按钮（一键：`POST /api/auth/logout` → `window.location.reload()`，与登录镜像）。Host 放置保持在 preset realm 之外（preset-local 绑定会饿死后续 host 行）。本记录所守的 AGENTS fix 拥有 `WDIO` + `API` 套件，含 deliberate 的实库逆向循环（`EventGateVerifier`）来自 warm context——那些复现是稳定的；此处 stale 文案是唯一需要的迁移修复。`dsh_session` cookie 的 `Secure` 及其登出清除必须镜像 `isHttps`（登出的 `Max-Age=0` 副本也在条件上为 `Secure`），否则 https 登出会留下陈旧 cookie。另见 Task #8 与登出按钮架构笔记。
 
-**不改工具、sandbox 或会话模型。** 工具仍在服务器上运行。`session.create` 仍不在 `PRIVILEGED_METHODS` 中（设计如此——默认 preset 已带 `bash` 与文件系统工具，把切换 pin 住将是开着的门旁再加一道 fence）。auth 是阻止匿名访问的 gate；已认证用户能做什么不变。
+**不改工具、sandbox 或会话模型。** 工具仍在服务器上运行。`session.create` 仍不在 `PRIVILEGED_METHODS` 中（设计如此——默认 preset 已带 `bash` 与文件系统工具，把切换 pin 住将是开着的门旁再加一道 fence）。auth（+ admin gate）是阻止匿名访问的 gate；已认证用户能做什么现在是按 role 决定。
 
 ## 考虑过的替代方案
 

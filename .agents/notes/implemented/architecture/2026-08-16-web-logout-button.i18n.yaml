@@ -1,0 +1,6 @@
+# Bilingual-pair consistency record (docs/i18n/README.md): the git blob hash of each
+# side as of the last confirmed-consistent state. Both languages carry equal authority;
+# after editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-08-16-web-logout-button.md
+2026-08-16-web-logout-button.md: 7577557ac0c33efeeceacef6e23cf6b275ac9ef0
+2026-08-16-web-logout-button.zh.md: 7a357cfde26b9fa8f92151f9ebe8ba2f240ba4a3
