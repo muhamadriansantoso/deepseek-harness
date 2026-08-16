@@ -191,10 +191,12 @@
   padding: 8px 10px;
   border: 1px solid var(--dsw-alias-border-subtle, rgba(125, 125, 125, 0.15));
   border-radius: 8px;
+  min-width: 0;
 }
 
 .browseName {
   flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   word-break: break-all;
@@ -204,4 +206,11 @@
   flex-shrink: 0;
   font-size: 11px;
   color: var(--dsw-alias-text-secondary, inherit);
+}
+
+@media (max-width: 480px) {
+  .browseEntry {
+    flex-wrap: wrap;
+    gap: 6px 8px;
+  }
 }
