@@ -146,8 +146,10 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
   private openGeneration(): Promise<void> {
     const options = this.connectOptions
     if (options === undefined) return Promise.reject(new Error('runner transport connect() was not called'))
+    const device = options.device.trim()
+    if (device.length === 0) return Promise.reject(new Error('runner transport: device id is required'))
     const url = new URL('/runner/channel', options.server)
-    url.searchParams.set('device', options.device)
+    url.searchParams.set('device', device)
     return new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(url, {
         headers: { cookie: options.cookie, host: url.host },

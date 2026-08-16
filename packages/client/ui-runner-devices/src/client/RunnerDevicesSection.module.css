@@ -61,6 +61,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
 .deviceDot {
@@ -71,16 +72,22 @@
   font-size: 14px;
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .statusOnline {
   margin-left: auto;
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--dsw-alias-text-success, #16a34a);
 }
 
 .statusOffline {
   margin-left: auto;
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--dsw-alias-text-secondary, inherit);
 }
@@ -89,6 +96,13 @@
   margin: 0;
   font-size: 12px;
   color: var(--dsw-alias-text-secondary, inherit);
+}
+
+.attachMessage {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-text-success, #16a34a);
+  word-break: break-all;
 }
 
 .folderPicker {
@@ -111,10 +125,18 @@
   display: flex;
   gap: 8px;
   align-items: stretch;
+  min-width: 0;
 }
 
 .browseForm > :first-child {
   flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .browseForm {
+    flex-direction: column;
+  }
 }
 
 .browseError {

@@ -161,7 +161,6 @@ export function RunnerDevicesSection({ controller, useSnapshot, t }: RunnerDevic
   const devices = useSnapshot(s => s.devices)
   const browseByDevice = useSnapshot(s => s.browse)
   const attachMessage = useSnapshot(s => s.attachMessage)
-  void attachMessage
 
   useEffect(() => {
     void controller.load()
@@ -183,6 +182,7 @@ export function RunnerDevicesSection({ controller, useSnapshot, t }: RunnerDevic
   return (
     <div className={css.root}>
       <p className={css.intro}>{t('intro')}</p>
+      {attachMessage !== null ? <p className={css.attachMessage} role="status">{attachMessage}</p> : null}
 
       {devices.length === 0
         ? (
