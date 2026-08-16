@@ -21,6 +21,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import bcrypt from 'bcryptjs'
 import { Pool } from 'pg'
+import type { Role } from '@deepseek-ai/dsh-principal'
 
 /** Stable Cordis plugin name. */
 export const name = 'auth-simple'
@@ -67,12 +68,16 @@ interface AuthUser {
   id: string
   /** bcrypt password hash. */
   passwordHash: string
+  /** Role of the user. */
+  role: Role
 }
 
 /** Decoded session token payload. */
 interface SessionPayload {
   /** User id this session belongs to. */
   userId: string
+  /** Role carried in the token. */
+  role: Role
   /** Token issue time (epoch ms). */
   issuedAt: number
 }
@@ -113,6 +118,9 @@ export class AuthSimpleService extends Service {
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `)
+    await this.pool.query(`
+      ALTER TABLE dsh_auth_users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'user'
+    `)
   }
 
   /**
@@ -123,7 +131,7 @@ export class AuthSimpleService extends Service {
    */
   async verifyCredentials(userId: string, password: string): Promise<boolean> {
     const result = await this.pool.query<AuthUser>(
-      'SELECT id, password_hash AS "passwordHash" FROM dsh_auth_users WHERE id = $1',
+      'SELECT id, password_hash AS "passwordHash", role FROM dsh_auth_users WHERE id = $1',
       [userId],
     )
     const user = result.rows[0]
@@ -131,13 +139,36 @@ export class AuthSimpleService extends Service {
     return bcrypt.compare(password, user.passwordHash)
   }
 
+  /** Lookup a user by id (role + createdAt), or undefined when absent. */
+  async findUser(userId: string): Promise<(AuthUser & { createdAt: string }) | undefined> {
+    const result = await this.pool.query<AuthUser & { createdAt: string }>(
+      'SELECT id, password_hash AS "passwordHash", role, created_at AS "createdAt" FROM dsh_auth_users WHERE id = $1',
+      [userId],
+    )
+    return result.rows[0]
+  }
+
+  /** List all users (id + role + createdAt). */
+  async listUsers(): Promise<readonly { id: string; role: Role; createdAt: string }[]> {
+    const result = await this.pool.query<{ id: string; role: string; createdAt: string }>(
+      'SELECT id, role, created_at AS "createdAt" FROM dsh_auth_users ORDER BY created_at',
+    )
+    return result.rows.map(row => ({ id: row.id, role: (row.role === 'admin' ? 'admin' : 'user') as Role, createdAt: row.createdAt }))
+  }
+
+  /** Set a user's role; returns true when a row was affected. */
+  async setRole(userId: string, role: Role): Promise<boolean> {
+    const result = await this.pool.query('UPDATE dsh_auth_users SET role = $1 WHERE id = $2', [role, userId])
+    return (result.rowCount ?? 0) > 0
+  }
+
   /**
    * Sign a session token for a user. The token is `base64url(payload).base64url(hmac)`.
    * @param userId - the authenticated user id.
    * @returns the signed session token string.
    */
-  signSession(userId: string): string {
-    const payload: SessionPayload = { userId, issuedAt: Date.now() }
+  signSession(userId: string, role: Role): string {
+    const payload: SessionPayload = { userId, role, issuedAt: Date.now() }
     const payloadStr = Buffer.from(JSON.stringify(payload)).toString('base64url')
     const signature = this.sign(payloadStr)
     return `${payloadStr}.${signature}`
@@ -158,7 +189,13 @@ export class AuthSimpleService extends Service {
     if (!timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) return undefined
     let payload: SessionPayload
     try {
-      payload = JSON.parse(Buffer.from(payloadStr, 'base64url').toString()) as SessionPayload
+      const raw = JSON.parse(Buffer.from(payloadStr, 'base64url').toString()) as SessionPayload & { role?: unknown }
+      // Backward compat: old 24h-TTL tokens may have no `role`; default to 'user'.
+      payload = {
+        userId: raw.userId,
+        role: (raw.role === 'admin' ? 'admin' : 'user') as Role,
+        issuedAt: raw.issuedAt,
+      }
     } catch {
       return undefined
     }
@@ -210,6 +247,9 @@ export class AuthSimpleService extends Service {
 
 /** Route prefix for auth endpoints (outside the RPC fence). */
 const AUTH_PREFIX = '/api/auth'
+
+/** Route prefix for admin endpoints (also outside the RPC fence; gated by role). */
+const ADMIN_PREFIX = '/api/admin'
 
 /**
  * Read the Cookie header from either a Node `IncomingHttpHeaders` plain object
@@ -286,16 +326,27 @@ export function apply(ctx: Context, config: SchemaResolvedConfig): void {
     },
   }), 'auth-simple: /api/auth routes')
 
+  // Register admin routes (role-gated by the handler itself).
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: ADMIN_PREFIX,
+    handler: async (req, res) => {
+      await handleAdminRoute(auth, req, res)
+    },
+  }), 'auth-simple: /api/admin routes')
+
   // Provide the authHook to the connection fence. The fence calls this AFTER
   // the DNS-rebinding Host/Origin check passes, so by the time this runs the
   // request is from a trusted authority. Auth is the second gate: no valid
-  // session cookie → 401.
+  // session cookie → 401. Returns the object form so the role rides alongside
+  // the userId into the role ALS (and the privileged-method unpin).
   const hook = (request: { headers: Record<string, string | string[] | undefined> | Headers }) => {
     const cookieHeader = readCookieHeader(request.headers)
     const token = auth.extractCookie(cookieHeader)
     if (token === undefined) return undefined
     const payload = auth.verifySession(token)
-    return payload?.userId
+    if (payload === undefined) return undefined
+    return { userId: payload.userId, role: payload.role } as const
   }
   ctx.effect(() => ctx.connection.registerAuthHook(hook), 'auth-simple: authHook')
 }
@@ -345,7 +396,10 @@ async function handleLogin(auth: AuthSimpleService, req: IncomingMessage, res: S
     writeJson(res, 401, { error: 'invalid credentials' })
     return
   }
-  const token = auth.signSession(userId)
+  const user = await auth.findUser(userId)
+  // `valid` already proved the row exists, but re-check the role is still here.
+  const role: Role = (user?.role === 'admin' ? 'admin' : 'user')
+  const token = auth.signSession(userId, role)
   const isHttps = new URL(req.url ?? '/', 'http://x').protocol === 'https:'
   const cookieParts = [
     `${auth.cookieName}=${encodeURIComponent(token)}`,
@@ -384,5 +438,61 @@ function handleMe(auth: AuthSimpleService, req: IncomingMessage, res: ServerResp
     writeJson(res, 401, { error: 'session expired' })
     return
   }
-  writeJson(res, 200, { userId: payload.userId })
+  writeJson(res, 200, { userId: payload.userId, role: payload.role })
+}
+
+/**
+ * Handle one request under `/api/admin/*`. Role-gated: 401 when no session,
+ * 403 when `role !== 'admin'`, else dispatch to listUsers / setRole.
+ * @param auth - the auth service.
+ * @param req - the incoming HTTP request.
+ * @param res - the server response.
+ */
+async function handleAdminRoute(
+  auth: AuthSimpleService,
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<void> {
+  const rawPath = new URL(req.url ?? '/', 'http://x').pathname
+  const subPath = rawPath.slice(ADMIN_PREFIX.length)
+  // Verify session and role for every admin request.
+  const cookieHeader = req.headers.cookie
+  const token = cookieHeader === undefined ? undefined : auth.extractCookie(cookieHeader)
+  if (token === undefined) {
+    writeJson(res, 401, { error: 'not authenticated' })
+    return
+  }
+  const payload = auth.verifySession(token)
+  if (payload === undefined) {
+    writeJson(res, 401, { error: 'session expired' })
+    return
+  }
+  if (payload.role !== 'admin') {
+    writeJson(res, 403, { error: 'forbidden: admin only' })
+    return
+  }
+
+  if (subPath === '/users' && req.method === 'GET') {
+    const users = await auth.listUsers()
+    writeJson(res, 200, { users })
+    return
+  }
+  if (subPath === '/users/role' && req.method === 'POST') {
+    const body = await readJsonBody(req, 8192)
+    const obj = asObject(body)
+    const id = obj?.['id']
+    const role = obj?.['role']
+    if (typeof id !== 'string' || (role !== 'user' && role !== 'admin')) {
+      writeJson(res, 400, { error: 'id (string) and role ("user"|"admin") are required' })
+      return
+    }
+    const ok = await auth.setRole(id, role as Role)
+    if (!ok) {
+      writeJson(res, 404, { error: 'user not found' })
+      return
+    }
+    writeJson(res, 200, { ok: true })
+    return
+  }
+  writeJson(res, 404, { error: 'not found' })
 }

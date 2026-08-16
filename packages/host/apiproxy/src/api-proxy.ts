@@ -22,7 +22,7 @@ import { SessionQueryError, type SessionSearchCursor } from '@deepseek-ai/dsh-se
 import { SubagentError } from '@deepseek-ai/dsh-subagent'
 import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
-import { currentPrincipal } from '@deepseek-ai/dsh-principal'
+import { currentPrincipal, currentRole } from '@deepseek-ai/dsh-principal'
 import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
 import {
   workspaceDomainState, workspaceRecord, WorkspaceId as brandWorkspaceId,
@@ -3794,6 +3794,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // request-scoped ALS the WS upgrade established. Undefined means no
         // auth composed / single-user, and isolation is OFF (all frames pass).
         const principal = currentPrincipal()
+        const role = currentRole()
         // Whether a session-scoped host frame reaches this consumer — same
         // owner rule as the mux stream (derived from the workspace the
         // session's cwd belongs to; undefined owner = legacy/shared = visible).
@@ -3911,17 +3912,19 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }),
           // Allowlisted host events ride one verbatim wrapper frame each. The
           // allowlist is api-remotes', and `ctx.remote.$on` is the consumer
-          // face; nothing here projects, redacts, or renames. These are not
-          // session/workspace scoped (device roster, runner connection state),
-          // so they pass the isolation fence unchanged — multi-user scoping of
-          // the roster broadcast is the Task #8 follow-up.
+          // face. `agent-preset/selected` is session-scoped (args[0] is
+          // SessionId) and so is owner-gated; `credentials/updated` and
+          // `settings/document-updated` carry sensitive config state and so are
+          // admin-only in a multi-user deployment. The other 8 events are
+          // deployment-wide catalog/runner invalidations and broadcast to all.
           ...API_REMOTE_FORWARDED_EVENTS.map(name => ctx.on(
             name,
-            // The allowlist's shape assertion proves each name is a real,
-            // non-scoped, void-returning event, so the rest-parameter handler
-            // satisfies every member of the union `on` accepts here;
-            // assertJsonArgs proves the payload is JSON-safe before it queues.
             ((...args: unknown[]) => {
+              if (name === 'agent-preset/selected') {
+                if (!sessionVisible(args[0] as SessionId)) return
+              } else if (name === 'credentials/updated' || name === 'settings/document-updated') {
+                if (principal !== undefined && role !== 'admin') return
+              }
               queue.push(frame({
                 type: 'host/remote-event',
                 event: name,

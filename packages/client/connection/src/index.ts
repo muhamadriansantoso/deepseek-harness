@@ -10,7 +10,7 @@ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { rejectWebSocketUpgrade, WebSocketDownlinks } from './websocket-downlink.ts'
-import { withPrincipal } from '@deepseek-ai/dsh-principal'
+import { withPrincipal, withRole } from '@deepseek-ai/dsh-principal'
 
 export type {
   ConnectionAuthHook,
@@ -23,7 +23,10 @@ export type {
   ApiTrustFenceRequest,
 } from './rpc.ts'
 export { HostConnectionService } from './rpc-host.ts'
-export { withPrincipal, currentPrincipal } from '@deepseek-ai/dsh-principal'
+export type { AuthenticatedAuth } from './rpc-host.ts'
+export { withPrincipal, currentPrincipal, withRole, currentRole } from '@deepseek-ai/dsh-principal'
+export type { Principal } from '@deepseek-ai/dsh-principal'
+export type { Role } from '@deepseek-ai/dsh-principal'
 
 export { API_PATH, HOST_EVENTS_PATH, MUX_EVENTS_PATH } from './api-path.ts'
 
@@ -86,8 +89,9 @@ export const Config: z<ConnectionConfig> = z.object({
  * environment-variable name is configured and where from, which is
  * reconnaissance no anonymous caller should have. `trustedHosts` is a
  * DNS-rebinding fence, explicitly not authentication, so the whole
- * configuration plane stays loopback-same-origin until a real authentication
- * layer exists. `llm.discoverModels` belongs to that plane on both counts: it
+ * configuration plane stays loopback-same-origin OR admin-authenticated —
+ * an authenticated `admin` role unpins privileged methods on any origin.
+ * `llm.discoverModels` belongs to that plane on both counts: it
  * carries a draft credential, and it makes the HOST issue a GET to a URL the
  * caller chose and reports back the status or the parsed body — an anonymous
  * LAN caller would have a probe for whatever the host can reach and the
@@ -153,31 +157,34 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
       const method = pathname.startsWith(`${API_PATH}/`)
         ? pathname.slice(API_PATH.length + 1)
         : undefined
+
+      // Auth hook — run BEFORE the privileged pin so the role is known when
+      // the pin evaluates. `undefined` = no auth composed (single-user) /
+      // legacy true (isolation OFF); `null` = rejected; object = identity+role.
+      const auth = await connection.authenticate({ headers: request.headers })
+      if (auth === null) {
+        return new Response('unauthorized', { status: 401 })
+      }
+
+      // Privileged plane: loopback OR an authenticated admin. Reads `auth.role`
+      // directly (not the ALS) so ordering is irrelevant; non-admin non-loopback
+      // still 403s.
       if (method !== undefined
         && PRIVILEGED_METHODS.has(method)
+        && auth?.role !== 'admin'
         && !isTrustedApiRequest(request, [])) {
         return new Response('forbidden', { status: 403 })
       }
+
       if (request.method === 'GET' && (pathname === MUX_EVENTS_PATH || pathname === HOST_EVENTS_PATH)) {
         return new Response('upgrade required', {
           status: 426,
           headers: { connection: 'Upgrade', upgrade: 'websocket' },
         })
       }
-      // Auth hook: after the fence's rebinding check, an auth plugin may
-      // reject requests lacking a valid session. When no auth plugin is
-      // composed, connection.authenticate returns undefined (no-op). The
-      // resolved userId is carried through the request's async tree via the
-      // principal store so downstream RPC handlers and capability providers can
-      // scope by user; undefined means "no auth composed / single-user" and
-      // every scoping guard runs with isolation OFF.
-      const principal = await connection.authenticate({ headers: request.headers })
-      if (principal === null) {
-        return new Response('unauthorized', { status: 401 })
-      }
       const apiProxy = ctx.get('apiProxy')
       if (apiProxy === undefined) return new Response('not found', { status: 404 })
-      return withPrincipal(principal, () => toFetchHandler(apiProxy).fetch(request))
+      return withPrincipal(auth?.userId, () => withRole(auth?.role, () => toFetchHandler(apiProxy).fetch(request)))
     },
   })
   const route: WebRoute = {
@@ -212,16 +219,16 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
             rejectWebSocketUpgrade(socket)
             return
           }
-          // Establish the request-scoped principal on the upgrade path so the
-          // mux/host SSE handlers downstream can scope frames by user. A
-          // rejecting hook rejects the upgrade; an admitting hook with no
+          // Establish the request-scoped principal+role on the upgrade path so
+          // the mux/host SSE handlers downstream can scope frames by user/role.
+          // A rejecting hook rejects the upgrade; an admitting hook with no
           // identity (legacy `true` / no auth composed) runs isolation OFF.
-          const principal = await connection.authenticate({ headers: req.headers })
-          if (principal === null) {
+          const auth = await connection.authenticate({ headers: req.headers })
+          if (auth === null) {
             rejectWebSocketUpgrade(socket)
             return
           }
-          return withPrincipal(principal, () => handle(req, socket, head))
+          return withPrincipal(auth?.userId, () => withRole(auth?.role, () => handle(req, socket, head)))
         },
       }), `client-connection: ${path} WebSocket`)
     }

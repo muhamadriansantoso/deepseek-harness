@@ -69,6 +69,7 @@
     "@deepseek-ai/dsh-client-ui-settings-plugin-inventory": "workspace:^",
     "@deepseek-ai/dsh-client-ui-permission-presets": "workspace:^",
     "@deepseek-ai/dsh-client-ui-plan": "workspace:^",
+    "@deepseek-ai/dsh-client-ui-admin": "workspace:^",
     "@deepseek-ai/dsh-client-ui-runner-devices": "workspace:^",
     "@deepseek-ai/dsh-client-ui-settings-plugins": "workspace:^",
     "@deepseek-ai/dsh-client-ui-user-questions": "workspace:^",

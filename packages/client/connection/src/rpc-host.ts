@@ -1,6 +1,7 @@
 /** Host registry and HTTP adapter for generic Connection RPC channels. */
 
 import { Context, Service } from '@deepseek-ai/cordis'
+import type { Role } from '@deepseek-ai/dsh-principal'
 import type { WebRoute } from '@deepseek-ai/dsh-host-webserver'
 import {
   clientRequestSchema,
@@ -39,6 +40,14 @@ declare module '@deepseek-ai/cordis' {
     /** Host Connection transport and RPC registrations. */
     connection: HostConnectionHandle
   }
+}
+
+/** Authenticated identity + role resolved from the fence's auth hook. */
+export interface AuthenticatedAuth {
+  /** The authenticated userId. */
+  readonly userId: string
+  /** The authenticated role (undefined for legacy hooks returning a bare string). */
+  readonly role: Role | undefined
 }
 
 /** Host Connection service whose channel registrations belong to the caller fiber. */
@@ -96,12 +105,13 @@ export class HostConnectionService extends Service implements HostConnectionHand
    * @param request - the request facts the hook reads.
    * @returns the userId when admitted, `undefined` when no principal, or `null` when rejected.
    */
-  async authenticate(request: ApiTrustFenceRequest): Promise<string | null | undefined> {
+  async authenticate(request: ApiTrustFenceRequest): Promise<AuthenticatedAuth | null | undefined> {
     if (this.authHook === undefined) return undefined
     const result = await this.authHook(request)
     // Legacy `true` (or any non-string truthy) admits without a per-user identity.
     if (result === true) return undefined
     if (result === false || result === undefined) return null
+    if (typeof result === 'string') return { userId: result, role: undefined }
     return result
   }
 

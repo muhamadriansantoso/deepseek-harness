@@ -1,25 +1,29 @@
 /** Generic unary RPC contracts shared by the Host and Client Connection halves. */
 
 import type { RpcResult } from '@deepseek-ai/dsh-host-apiproxy/api'
-
 /** Trust fence applied before a Host RPC channel reaches its handler. */
 export type ConnectionRpcAuthority = 'trusted-host' | 'loopback'
 
+
 /**
- * The authenticated principal a hook resolved: the userId string, or `undefined`
- * / `false` to reject. A bare `true` admits an authenticated request that
- * carries no per-user identity (legacy behavior, single-user), so the scoping
- * guards see `undefined` and run with isolation OFF.
+ * The authenticated principal a hook resolved: the userId string, an object
+ * carrying `userId` + `role`, or `undefined`/`false` to reject. A bare `true`
+ * admits an authenticated request that carries no per-user identity
+ * (legacy behavior, single-user), so the scoping guards see `undefined` and run
+ * with isolation OFF. Out-of-tree hooks returning a bare `string` still compile
+ * (the union only grew) but won't get the unpin — document the object form in
+ * the hook's docstring when relying on admin privilege.
  */
-export type ConnectionAuthResult = string | undefined | boolean
+export type ConnectionAuthResult = string | undefined | boolean | { readonly userId: string; readonly role: 'user' | 'admin' }
 
 /**
  * Authentication hook called by the trust fence AFTER the DNS-rebinding
- * Host/Origin check passes. Returns the request's userId to admit it (and make
- * that identity available to downstream scoping via `currentPrincipal()`),
- * or `undefined`/`false` to reject. A legacy hook returning `true` admits the
- * request without a per-user identity. An auth plugin provides this through
- * {@link HostConnectionHandle.registerAuthHook}; when no auth plugin is
+ * Host/Origin check passes. Returns the request's userId (or an object with
+ * `userId`+`role`) to admit it (making identity+role available downstream via
+ * `currentPrincipal()`/`currentRole()`), or `undefined`/`false` to reject. A
+ * legacy hook returning `true` admits without per-user identity. A bare `string`
+ * still admits (role `undefined` → no unpin). An auth plugin provides this
+ * through {@link HostConnectionHandle.registerAuthHook}; when no auth plugin is
  * composed, no hook is registered and the fence behaves exactly as before.
  */
 export type ConnectionAuthHook = (request: ApiTrustFenceRequest) => ConnectionAuthResult | Promise<ConnectionAuthResult>

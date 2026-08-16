@@ -22,8 +22,14 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 /** The authenticated userId for the current request, or undefined when unscoped. */
 export type Principal = string | undefined
 
+/** The authenticated role for the current request, or undefined when unscoped. */
+export type Role = 'user' | 'admin'
+
 /** The request-scoped principal store. */
 const principalStore = new AsyncLocalStorage<Principal>()
+
+/** The request-scoped role store — set alongside the principal at the fetch/WS boundary. */
+const roleStore = new AsyncLocalStorage<Role | undefined>()
 
 /**
  * Run `fn` with `userId` as the current request principal. The store propagates
@@ -49,4 +55,29 @@ export function withPrincipal<T>(userId: Principal, fn: () => T): T {
  */
 export function currentPrincipal(): Principal {
   return principalStore.getStore()
+}
+
+/**
+ * Run `fn` with `role` as the current request role. Mirrors {@link withPrincipal}:
+ * `undefined` means "isolation off" / no auth — every role guard treats it as
+ * single-user/legacy and falls back to the loopback pin. The store propagates
+ * through the request's whole async tree; a detached fiber loses it — capture at
+ * the detach point instead.
+ * @param role - the authenticated role, or undefined for an unauthenticated scope.
+ * @param fn - the work to run inside the role scope.
+ * @returns the value `fn` produced.
+ */
+export function withRole<T>(role: Role | undefined, fn: () => T): T {
+  return roleStore.run(role, fn)
+}
+
+/**
+ * The authenticated role for the current request, or `undefined` when no role
+ * scope is active (no auth composed, in-process test, or a detached fiber).
+ * Role guards read this and treat `undefined` as "no role" — the pre-gate,
+ * single-user behavior. Only an authenticated admin reaches privileged methods.
+ * @returns the current request role, or undefined.
+ */
+export function currentRole(): Role | undefined {
+  return roleStore.getStore()
 }
