@@ -20,6 +20,7 @@ export const workspaceViewSchema = z.object({
   sessionIds: z.array(sessionIdSchema),
   createdAt: z.string(),
   updatedAt: z.string(),
+  owner: z.string().optional(),
 }) satisfies z.ZodType<Wire<WorkspaceView>>
 
 /** workspace.list request payload (empty object literal). */

@@ -109,6 +109,32 @@
 
     # ── layer 2: transport/service ──────────────────────────────────────────────
 
+    # Simple auth: PostgreSQL-backed user store + bcrypt + HMAC session tokens.
+    # Registers /api/auth/* routes and provides the authHook that gates the /api
+    # fence. Connection string and session secret come from the environment so
+    # they never sit in the composition file.
+    - id: auth-simple
+      name: '@deepseek-ai/dsh-auth-simple'
+      inject: [webServer, connection]
+      config:
+        connectionString: !!js process.env.DSH_AUTH_PG_STRING ?? ''
+        sessionSecret: !!js process.env.DSH_AUTH_SESSION_SECRET ?? ''
+        sessionTtlMs: 86400000
+        cookieName: dsh_session
+
+    # The runner hub: owns per-(user,device) WebSocket connections from laptops
+    # on /runner/channel, and the LLM gateway that holds the central
+    # DEEPSEEK_API_KEY. Gated by the same trust fence + auth cookie as /api, so a
+    # laptop's runner connect is admitted only with a valid session. Injects
+    # webServer (the upgrade route), authSimple (the cookie gate), llm (the
+    # gateway's adapter, which owns the server's API key), and webRuntime (so the
+    # trustedHosts config resolves the deployment's serving authorities).
+    - id: runner-hub
+      name: '@deepseek-ai/dsh-runner-hub'
+      inject: [webServer, authSimple, llm, webRuntime]
+      config:
+        trustedHosts: !!js ctx.webRuntime.trustedHosts
+
     # Plain route-registration carrier; host and port come from the app's
     # webStartup provider, with these deployment fallbacks. The dist is served by
     # the web-runtime row below through the fallback seat.
@@ -150,6 +176,11 @@
     # entry by the kernel, never fetched).
     - id: modules
       name: '@deepseek-ai/dsh-client-modules'
+
+    # Login gate: probes /api/auth/me at boot and renders a login overlay when
+    # unauthenticated. An immediately-tier row so it loads before the shell.
+    - id: ui-auth-login
+      name: '@deepseek-ai/dsh-client-ui-auth-login'
 
     # Owns both ends of the web transport: node half binds the gateway to the
     # webserver under /api; browser half is the fetch/SSE client.
@@ -257,6 +288,11 @@
     # sessions created later. Absent a roster it renders nothing.
     - id: ui-agent-preset
       name: '@deepseek-ai/dsh-client-ui-agent-preset'
+
+    # Runner devices settings section: the connected-laptop list and task
+    # dispatch surface over the hub's per-userId-scoped /api/runner API.
+    - id: ui-runner-devices
+      name: '@deepseek-ai/dsh-client-ui-runner-devices'
 
     # Plugin configuration: the host-plane sections a user owns, as expandable
     # cards. A namespace this deployment does not expose renders nothing.

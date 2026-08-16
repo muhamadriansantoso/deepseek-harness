@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentOptions, AgentSetup } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent, SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
+import { currentPrincipal } from '@deepseek-ai/dsh-principal'
 import { TypertLookupFailure } from '@deepseek-ai/dsh-typert-protocol'
 import type {} from '@deepseek-ai/dsh-typert-registry'
 
@@ -111,6 +112,45 @@ export async function inspectApiRemoteSession(
 }
 
 /**
+ * Derive the owning userId of a session from the workspace registry, by the
+ * session's cwd. A remote workspace's owner is its `remote.userId`; a local
+ * workspace's owner is the new `owner` field. `undefined` means the cwd matches
+ * no registered workspace (a cold session whose workspace was deleted, or a
+ * cwd-less session) — callers treat that as "owner unknown, allow" so the
+ * single-user and cold-resume paths keep working.
+ *
+ * This is derived at use time rather than stamped on the `SessionHeader`: the
+ * SQLite persistence backend has explicit columns and drops unknown header
+ * fields (the prior `deviceId` field is already lost there), so a durable
+ * stamp would silently vanish. The workspace record is the authority and is
+ * always consulted here.
+ * @param ctx - Host Context carrying the workspace registry (optional).
+ * @param header - the session header carrying the cwd to resolve.
+ * @returns the owning userId, or undefined when unresolvable.
+ */
+export async function sessionOwnerFor(
+  ctx: Context,
+  header: { readonly cwd?: string },
+): Promise<string | undefined> {
+  const cwd = header.cwd
+  if (cwd === undefined) return undefined
+  const registry = ctx.get('workspaceRegistry')
+  if (registry === undefined) return undefined
+  // Remote first (verbatim string match, no host realpath): the cwd is a laptop
+  // path. Then local via the canonical realpath resolver.
+  const remote = registry.findRemoteByPath(cwd)
+  if (remote !== undefined) return remote.userId
+  try {
+    const local = await registry.resolveByPath(cwd)
+    return local?.owner
+  } catch {
+    // A laptop path that `realpath` cannot resolve is not a local workspace;
+    // it matched no remote facet above either, so its owner is unknown.
+    return undefined
+  }
+}
+
+/**
  * Create the Host's shared Agent resolver and configure Agent/Session Typert lookups.
  * Live Agents are reused, ordinary cold sessions resume once per identity, and
  * subagent-owned identities retain the legacy `agent-busy` fence.
@@ -134,6 +174,39 @@ export function createApiRemoteAgentResolver(
   }
 
   const agentFor = async (sessionId: SessionId): Promise<ApiRemoteAgentResult> => {
+    // Per-user isolation (IDOR guard): a defined principal may not reach a
+    // session owned by another user. The session's owner is derived from the
+    // workspace its cwd belongs to (remote facet's userId, or a local
+    // workspace's owner). The guard only rejects when BOTH the principal and
+    // the session's owner are known and differ — an undefined principal (no
+    // auth composed / single-user) or an unresolvable owner (cold session whose
+    // workspace was deleted) admits the operation, preserving the pre-isolation
+    // behavior and the single-user/cold-resume paths. Unknown sessions still
+    // report `session-not-found` (no existence leak) through the cold path below.
+    const principal = currentPrincipal()
+    if (principal !== undefined) {
+      const liveAgent = ctx.agents.get(sessionId)
+      const liveHeader = liveAgent?.session.header ?? ctx.sessions.get(sessionId)?.header
+      let header: { readonly cwd?: string } | undefined
+      if (liveHeader !== undefined) {
+        header = liveHeader.cwd === undefined ? {} : { cwd: liveHeader.cwd }
+      } else {
+        // Cold path: resolve the durable header without resuming. A not-found
+        // session has no owner to guard against; the cold path below reports it.
+        try {
+          const inspected = await inspectApiRemoteSession(ctx, sessionId)
+          header = inspected.meta.cwd === undefined ? {} : { cwd: inspected.meta.cwd }
+        } catch {
+          header = undefined
+        }
+      }
+      if (header !== undefined) {
+        const owner = await sessionOwnerFor(ctx, header)
+        if (owner !== undefined && owner !== principal) {
+          return { error: { code: 'session-not-found', message: `session "${sessionId}" not found`, details: { sessionId } } }
+        }
+      }
+    }
     const fenced = fencedLiveAgent(sessionId)
     if (fenced !== undefined) return fenced
     const attached = ctx.sessions.get(sessionId)

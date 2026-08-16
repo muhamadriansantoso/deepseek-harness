@@ -15,6 +15,8 @@ import { bridge, type FetchHandler } from './http-bridge.ts'
 import { isTrustedApiRequest } from './api-request-trust.ts'
 import { API_PATH } from './api-path.ts'
 import type {
+  ApiTrustFenceRequest,
+  ConnectionAuthHook,
   ConnectionRpcEndpointMatcher,
   ConnectionRpcHandler,
   ConnectionRpcHandlerOptions,
@@ -42,6 +44,7 @@ declare module '@deepseek-ai/cordis' {
 /** Host Connection service whose channel registrations belong to the caller fiber. */
 export class HostConnectionService extends Service implements HostConnectionHandle {
   private readonly interceptors = new Map<string, ConnectionRpcInterceptor>()
+  private authHook: ConnectionAuthHook | undefined
 
   /**
    * Provide the Host half over the active HTTP server.
@@ -60,6 +63,60 @@ export class HostConnectionService extends Service implements HostConnectionHand
       intercept: (channel, matches, handler, options) =>
         this.registerInterceptor(owner, channel, matches, handler, options),
     }
+  }
+
+  /**
+   * Register an authentication hook. The fence calls it after its
+   * DNS-rebinding check passes. At most one hook is active — a second
+   * registration throws, because two auth strategies cannot compose at the
+   * same enforcement point without a combiner.
+   * @param hook - the auth check; returns true to admit, false to reject.
+   * @returns asynchronous disposer removing the hook.
+   */
+  registerAuthHook(hook: ConnectionAuthHook): () => Promise<void> {
+    if (this.authHook !== undefined) {
+      throw new Error('connection: an auth hook is already registered')
+    }
+    this.authHook = hook
+    return this.ctx.effect(() => {
+      return () => {
+        if (this.authHook === hook) this.authHook = undefined
+        return Promise.resolve()
+      }
+    }, 'client-connection: authHook')
+  }
+
+  /**
+   * Resolve the request's principal: the userId string when the hook admits the
+   * request, `undefined` when no hook is composed (single-user / auth-less), or
+   * the hook returns `true` (legacy admit-without-identity). A rejecting hook
+   * (`false`/`undefined`) resolves to `null` so the caller can distinguish
+   * "rejected" from "no auth composed". Called by the route handler and WebSocket
+   * upgrade gate in `index.ts` after the DNS-rebinding fence passes.
+   * @param request - the request facts the hook reads.
+   * @returns the userId when admitted, `undefined` when no principal, or `null` when rejected.
+   */
+  async authenticate(request: ApiTrustFenceRequest): Promise<string | null | undefined> {
+    if (this.authHook === undefined) return undefined
+    const result = await this.authHook(request)
+    // Legacy `true` (or any non-string truthy) admits without a per-user identity.
+    if (result === true) return undefined
+    if (result === false || result === undefined) return null
+    return result
+  }
+
+  /**
+   * Run the auth hook when one is registered. Returns true when no hook is
+   * registered (the fence behaves as before) or when the hook admits the
+   * request. Called by the route handler and WebSocket upgrade gate in
+   * `index.ts` after the DNS-rebinding fence passes. Prefer {@link authenticate}
+   * at the request boundary where the principal is needed for scoping.
+   * @param request - the request facts the hook reads.
+   * @returns whether the request passes authentication.
+   */
+  async checkAuth(request: ApiTrustFenceRequest): Promise<boolean> {
+    const principal = await this.authenticate(request)
+    return principal !== null
   }
 
   /**

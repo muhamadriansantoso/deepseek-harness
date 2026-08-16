@@ -22,7 +22,19 @@
       "path": "../fs"
     },
     {
+      "path": "../../workspace/workspace"
+    },
+    {
+      "path": "../../runner/fs-remote"
+    },
+    {
+      "path": "../../runner/runner-hub"
+    },
+    {
       "path": "../../runtime-diagnostics/invariants"
+    },
+    {
+      "path": "../../util/principal"
     }
   ]
 }

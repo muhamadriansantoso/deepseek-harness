@@ -34,6 +34,21 @@
       "path": "../../shell/shell"
     },
     {
+      "path": "../../subprocess/subprocess"
+    },
+    {
+      "path": "../../workspace/workspace"
+    },
+    {
+      "path": "../../runner/subprocess-remote"
+    },
+    {
+      "path": "../../runner/runner-hub"
+    },
+    {
+      "path": "../../util/principal"
+    },
+    {
       "path": "../../spill/spill"
     },
     {

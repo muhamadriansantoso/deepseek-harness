@@ -96,6 +96,15 @@ export interface SessionHeader {
    * would replay history the model can no longer act on.
    */
   readonly agentPreset?: string
+  /**
+   * Id of the runner device whose filesystem executes this session's tool
+   * calls, when the session's workspace is remote. Durable for the same
+   * reason as `agentPreset`: a resumed remote session must re-bind its
+   * capability providers to the device it originally ran on, and the marker
+   * lets workspace accounting treat the cwd as a device path (never a host
+   * `realpath`).
+   */
+  readonly deviceId?: string
 }
 
 /**
@@ -118,6 +127,7 @@ export interface CreateSessionOptions {
     readonly origin?: 'subagent'
     readonly delegationDepth?: number
     readonly agentPreset?: string
+    readonly deviceId?: string
   }
 }
 

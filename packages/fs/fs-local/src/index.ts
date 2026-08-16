@@ -20,6 +20,9 @@ import type {
   FsWriteIntent,
   FsWriteOutcome,
 } from '@deepseek-ai/dsh-fs'
+import { RemoteFileSystem } from '@deepseek-ai/dsh-fs-remote'
+import type { RunnerConnection } from '@deepseek-ai/dsh-runner-hub'
+import { currentPrincipal } from '@deepseek-ai/dsh-principal'
 import {
   applyLiteralEdit,
   listDirectory,
@@ -75,6 +78,43 @@ export class LocalFileSystem extends FileSystem {
    * window can't interleave, making concurrent writes/edits deterministically
    * ordered (one wins, the rest see the new version and reject as stale). */
   private locks = new Map<string, Promise<unknown>>()
+  /**
+   * Remote filesystem adapters cached per live runner connection, so a remote
+   * session does not re-allocate the adapter per call. Keyed by the connection
+   * (a process-global singleton per `(userId, deviceId)`).
+   */
+  private readonly remoteFses = new WeakMap<RunnerConnection, RemoteFileSystem>()
+
+  /**
+   * The runner connection backing `path` when it belongs to a remote workspace,
+   * else `undefined` (a local host path, or no registry/hub composed). This is
+   * the provider-level routing seam for `ctx.fs`: each method asks whether its
+   * path/target is remote and, if so, delegates over the runner channel to the
+   * laptop instead of touching the host filesystem. A laptop path does not
+   * exist on the host, so host-side `realpath`/`stat` would throw — routing
+   * happens BEFORE any host resolution for `resolve`/`lstat`.
+   */
+  private remoteConnectionFor(path: string): RunnerConnection | undefined {
+    const remote = this.ctx.get('workspaceRegistry')?.findRemoteByPath(path, currentPrincipal())
+    if (remote === undefined) return undefined
+    const conn = this.ctx.get('runnerHub')?.getConnection(remote.userId, remote.deviceId)
+    if (conn === undefined || !conn.isOpen) {
+      throw new FsError(
+        `device offline: cannot reach the remote path "${path}" while device "${remote.deviceId}" is disconnected`,
+        'FS_IO_ERROR',
+      )
+    }
+    return conn
+  }
+
+  /** The cached {@link RemoteFileSystem} for one connection (allocates on first use). */
+  private remoteFs(conn: RunnerConnection): RemoteFileSystem {
+    const existing = this.remoteFses.get(conn)
+    if (existing !== undefined) return existing
+    const created = new RemoteFileSystem(this.ctx, conn)
+    this.remoteFses.set(conn, created)
+    return created
+  }
 
   constructor(ctx: Context, config: Config) {
     super(ctx)
@@ -105,6 +145,17 @@ export class LocalFileSystem extends FileSystem {
 
   override async resolve(path: string, opts?: { cwd?: string; signal?: AbortSignal }): Promise<FsTarget> {
     if (opts?.signal?.aborted) throw new FsError('resolve aborted', 'FS_ABORTED')
+    // A remote (laptop) path never exists on this host: route to the laptop
+    // BEFORE host resolution (which would `realpath` and throw ENOENT). The
+    // routing signal is the path itself — or the cwd fallback, since a remote
+    // session resolves relative paths against its laptop workspace root.
+    const remotePath = isAbsolute(path) ? path : (opts?.cwd ?? this.config.cwd)
+    const conn = this.remoteConnectionFor(remotePath)
+    if (conn !== undefined) {
+      const resolved = await this.remoteFs(conn).resolve(path, opts)
+      if (opts?.signal?.aborted) throw new FsError('resolve aborted', 'FS_ABORTED')
+      return resolved
+    }
     const local = await resolveLocalTarget(opts?.cwd ?? this.config.cwd, path)
     if (opts?.signal?.aborted) throw new FsError('resolve aborted', 'FS_ABORTED')
     return { targetKey: local.targetKey, displayPath: local.displayPath }
@@ -124,6 +175,8 @@ export class LocalFileSystem extends FileSystem {
   }
 
   override async stat(target: FsTarget, signal?: AbortSignal): Promise<FsInfo | undefined> {
+    const conn = this.remoteConnectionFor(String(target.targetKey))
+    if (conn !== undefined) return this.remoteFs(conn).stat(target, signal)
     if (signal?.aborted) throw new FsError('stat aborted', 'FS_ABORTED')
     const info = await probe(target.targetKey)
     if (signal?.aborted) throw new FsError('stat aborted', 'FS_ABORTED')
@@ -134,6 +187,13 @@ export class LocalFileSystem extends FileSystem {
   override async lstat(path: string, opts?: { cwd?: string }, signal?: AbortSignal): Promise<FsPathInfo | undefined> {
     if (signal?.aborted) throw new FsError('lstat aborted', 'FS_ABORTED')
     if (path.trim().length === 0) throw new FsError('file_path must be a non-empty string', 'FS_NOT_FOUND')
+    const remotePath = isAbsolute(path) ? path : (opts?.cwd ?? this.config.cwd)
+    const conn = this.remoteConnectionFor(remotePath)
+    if (conn !== undefined) {
+      const info = await this.remoteFs(conn).lstat(path, opts, signal)
+      if (signal?.aborted) throw new FsError('lstat aborted', 'FS_ABORTED')
+      return info
+    }
     const info = await probeNoFollow(resolve(opts?.cwd ?? this.config.cwd, path))
     if (signal?.aborted) throw new FsError('lstat aborted', 'FS_ABORTED')
     if (!info) return undefined
@@ -141,18 +201,26 @@ export class LocalFileSystem extends FileSystem {
   }
 
   override async readText(target: FsTarget, signal?: AbortSignal): Promise<string> {
+    const conn = this.remoteConnectionFor(String(target.targetKey))
+    if (conn !== undefined) return this.remoteFs(conn).readText(target, signal)
     return readWholeText({ displayPath: target.displayPath, targetKey: target.targetKey }, signal)
   }
 
   override streamText(target: FsTarget, signal?: AbortSignal): Promise<AsyncIterable<string>> {
+    const conn = this.remoteConnectionFor(String(target.targetKey))
+    if (conn !== undefined) return this.remoteFs(conn).streamText(target, signal)
     return Promise.resolve(streamWholeText({ displayPath: target.displayPath, targetKey: target.targetKey }, signal))
   }
 
   override async readBytes(target: FsTarget, signal: AbortSignal | undefined, maxBytes: number): Promise<Uint8Array> {
+    const conn = this.remoteConnectionFor(String(target.targetKey))
+    if (conn !== undefined) return this.remoteFs(conn).readBytes(target, signal, maxBytes)
     return readWholeBytes({ displayPath: target.displayPath, targetKey: target.targetKey }, signal, maxBytes, this.internals)
   }
 
   override async listDir(target: FsTarget, signal?: AbortSignal): Promise<FsDirEntry[]> {
+    const conn = this.remoteConnectionFor(String(target.targetKey))
+    if (conn !== undefined) return this.remoteFs(conn).listDir(target, signal)
     const entries = await listDirectory({ displayPath: target.displayPath, targetKey: target.targetKey }, signal)
     return entries.map(entry => ({
       name: entry.name,
@@ -169,6 +237,8 @@ export class LocalFileSystem extends FileSystem {
     expected?: FsWriteIntent,
     signal?: AbortSignal,
   ): Promise<FsWriteOutcome> {
+    const conn = this.remoteConnectionFor(String(target.targetKey))
+    if (conn !== undefined) return this.remoteFs(conn).writeText(target, content, expected, signal)
     return this.withLock(target.targetKey, async () => {
       const existing = await probe(target.targetKey)
       if (existing && existing.type !== 'file') {
@@ -224,6 +294,8 @@ export class LocalFileSystem extends FileSystem {
     expected?: { version: FsVersion },
     signal?: AbortSignal,
   ): Promise<FsEditOutcome> {
+    const conn = this.remoteConnectionFor(String(target.targetKey))
+    if (conn !== undefined) return this.remoteFs(conn).editText(target, edit, expected, signal)
     return this.withLock(target.targetKey, async () => {
       const existing = await probe(target.targetKey)
       // Stale guard before literal matching: an edit based on an old read reports

@@ -1,0 +1,47 @@
+# The dsh-runner bundle patch: a thin layer over dsh-base that swaps the local
+# LLM adapter for the remote gateway. It does NOT redeclare dsh-base's plugin
+# rows (bash/fs/skill/session/agent-loop/...) — those flow from dsh-base, so a
+# DSH repo update to any base plugin reaches this runner on the next install
+# unchanged. Only the rows that DIFFER for a laptop runner are touched here.
+#
+# The ONE capability swap: dsh-base enables the local `llm-deepseek` adapter
+# (provider route `deepseek-official`). This bundle DISABLES that row and
+# INSERTS `llm-remote` claiming `deepseek-official`, so every model call is
+# proxied to the server. Everything else stays local — that is "brain on server,
+# hands on laptop".
+
+- id: system-prompt
+  config:
+    persona: >-
+      You are a coding agent powered by the {{model}} model. Your working directory is {{cwd}}.
+      You are running on the user's laptop through a dsh runner; file and shell
+      operations act on this machine, while model calls are proxied to a central server.
+
+# The shared module-reload HMR row stays off; the launcher's watch-only
+# fallback still keeps the user patch layers live until the run exits.
+- id: hmr
+  disabled: true
+
+# THE REMOTE LLM SWAP — the single capability the laptop does not own locally.
+# Disable dsh-base's local DeepSeek adapter so `deepseek-official` is free for
+# the remote adapter to claim (duplicate provider routes throw). The remote
+# adapter is inserted below; it streams through the hub's LLM gateway, so the
+# server's DEEPSEEK_API_KEY is the single source of truth and the laptop never
+# sees it.
+- id: llm-deepseek
+  disabled: true
+
+- insert:
+    # Parses the connect flags and task positional from the command line.
+    - id: runner-startup
+      name: '@deepseek-ai/dsh-runner/startup'
+
+    # The runner driver: logs in, opens the runner channel, mounts the remote
+    # LLM adapter (imported directly — it is NOT a loader row, because its
+    # `apply()` needs the live WS transport and server-synced model catalog the
+    # runner supplies at connect time), then runs the local agent loop (or
+    # connects and idles). Injects llm because mounting the remote adapter
+    # (ctx.llm.registerAdapter) and the agent loop both read the llm service.
+    - id: runner-driver
+      name: '@deepseek-ai/dsh-runner'
+      inject: [runnerStartup, llm]

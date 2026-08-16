@@ -340,6 +340,35 @@ export interface Config {
 
 Source: [`packages/attachment/attachment-local/src/index.ts:24`](../packages/attachment/attachment-local/src/index.ts)
 
+<a id="deepseek-aidsh-auth-simple"></a>
+
+## `@deepseek-ai/dsh-auth-simple`
+
+Requires: `webServer` · `connection`
+
+```ts config-catalog
+interface SchemaResolvedConfig extends Config {
+  /** Session lifetime in milliseconds (resolved from the schema default when omitted). */
+  sessionTtlMs: number
+  /** Cookie name carrying the session token (resolved from the schema default when omitted). */
+  cookieName: string
+}
+
+/** Plugin configuration: PostgreSQL connection, session signing, and cookie name. */
+export interface Config {
+  /** PostgreSQL connection string (libpq format). */
+  connectionString: string
+  /** HMAC secret for signing session tokens. Must be at least 32 bytes. */
+  sessionSecret: string
+  /** Session lifetime in milliseconds. Defaults to 24 hours. */
+  sessionTtlMs?: number
+  /** Cookie name carrying the session token. Defaults to `dsh_session`. */
+  cookieName?: string
+}
+```
+
+Source: [`packages/auth/auth-simple/src/index.ts:57`](../packages/auth/auth-simple/src/index.ts)
+
 <a id="deepseek-aidsh-bash-local"></a>
 
 ## `@deepseek-ai/dsh-bash-local`
@@ -410,7 +439,7 @@ export interface ConnectionConfig {
 }
 ```
 
-Source: [`packages/client/connection/src/index.ts:50`](../packages/client/connection/src/index.ts)
+Source: [`packages/client/connection/src/index.ts:52`](../packages/client/connection/src/index.ts)
 
 <a id="deepseek-aidsh-client-hmr"></a>
 
@@ -1081,6 +1110,22 @@ Depends on: `Api` (`@earendil-works/pi-ai`) · `CacheRetention` (`@earendil-work
 
 Source: [`packages/llm/llm-pi-ai/src/config.ts:172`](../packages/llm/llm-pi-ai/src/config.ts)
 
+<a id="deepseek-aidsh-llm-remote"></a>
+
+## `@deepseek-ai/dsh-llm-remote`
+
+Requires: `llm`
+
+```ts config-catalog
+/** Configuration for the remote LLM adapter. */
+export interface Config {
+  /** Provider route(s) this adapter claims (must match the server's catalog). */
+  providers: string[]
+}
+```
+
+Source: [`packages/runner/llm-remote/src/index.ts:31`](../packages/runner/llm-remote/src/index.ts)
+
 <a id="deepseek-aidsh-llm-replay"></a>
 
 ## `@deepseek-ai/dsh-llm-replay`
@@ -1460,6 +1505,46 @@ export interface Config {
 ```
 
 Source: [`packages/guard/repeat-tool-reminder/src/index.ts:28`](../packages/guard/repeat-tool-reminder/src/index.ts)
+
+<a id="deepseek-aidsh-runner-hub"></a>
+
+## `@deepseek-ai/dsh-runner-hub`
+
+Requires: `webServer` · `authSimple` · `llm`
+
+```ts config-catalog
+/** Plugin configuration: the deployment's trusted serving authorities and synced MCP inventory. */
+export interface Config {
+  /** Authorities this deployment serves beyond loopback (mirrors ConnectionConfig.trustedHosts). */
+  trustedHosts?: string[]
+  /** MCP server configs the hub pushes to laptops so they spawn the servers locally. */
+  mcpServers?: SyncedMcpServer[]
+}
+
+/**
+ * A server-synced MCP server config — plain data mirroring `dsh-mcp-client`'s
+ * `StdioConfig`/`StreamableHttpConfig`. The laptop mounts each via a scoped
+ * `apply(ctx, config)` so the server process spawns LOCALLY on the laptop.
+ */
+export interface SyncedMcpServer {
+  /** Transport kind — only `stdio` is synced (the laptop spawns the server locally). */
+  readonly transport: 'stdio'
+  /** Unique namespace, ^[A-Za-z0-9_-]{1,32}$, namespacing `mcp__<server>__<tool>`. */
+  readonly serverName: string
+  /** Executable to spawn on the laptop. */
+  readonly command: string
+  /** Arguments, verbatim. */
+  readonly args?: readonly string[]
+  /** Per-server environment merged over the scrubbed ambient env. */
+  readonly env?: Readonly<Record<string, string>>
+  /** Working directory for the spawned server. */
+  readonly cwd?: string
+  /** Per-tool-call timeout in milliseconds (optional; the mcp-client default applies when omitted). */
+  readonly toolCallTimeoutMs?: number
+}
+```
+
+Source: [`packages/runner/runner-hub/src/index.ts:51`](../packages/runner/runner-hub/src/index.ts)
 
 <a id="deepseek-aidsh-sandbox-local"></a>
 
@@ -3032,6 +3117,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-client-modules` — requires `webServer` · `loader` ([`packages/client/modules/src/index.ts`](../packages/client/modules/src/index.ts))
 - `@deepseek-ai/dsh-client-runtime` ([`packages/client/runtime/src/index.ts`](../packages/client/runtime/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-agent-preset` ([`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts))
+- `@deepseek-ai/dsh-client-ui-auth-login` ([`packages/client/ui-auth-login/src/index.ts`](../packages/client/ui-auth-login/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-commands` ([`packages/client/ui-commands/src/index.ts`](../packages/client/ui-commands/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-conversation` ([`packages/client/ui-conversation/src/index.ts`](../packages/client/ui-conversation/src/index.ts))
 - `@deepseek-ai/dsh-client-ui-cordis` ([`packages/extensions/ui-cordis/src/index.ts`](../packages/extensions/ui-cordis/src/index.ts))
@@ -3073,6 +3159,7 @@ These load from a `cordis.yml` entry with no `config:` block; they declare no co
 - `@deepseek-ai/dsh-host-plugin-inventory` — requires `loader` ([`packages/host/plugin-inventory/src/index.ts`](../packages/host/plugin-inventory/src/index.ts))
 - `@deepseek-ai/dsh-llm` ([`packages/llm/llm/src/index.ts`](../packages/llm/llm/src/index.ts))
 - `@deepseek-ai/dsh-lsp` ([`packages/lsp/lsp/src/index.ts`](../packages/lsp/lsp/src/index.ts))
+- `@deepseek-ai/dsh-runner` — requires `agentDefaultModel` · `agents` · `sessions` · `RUNNER_STARTUP_SERVICE` ([`packages/runner/runner/src/index.ts`](../packages/runner/runner/src/index.ts))
 - `@deepseek-ai/dsh-schedule` — requires `agents` · `sessions` · `tools` · `sessionPersistence` ([`packages/schedule/schedule/src/index.ts`](../packages/schedule/schedule/src/index.ts))
 - `@deepseek-ai/dsh-session` ([`packages/core/session/src/index.ts`](../packages/core/session/src/index.ts))
 - `@deepseek-ai/dsh-session-checkpoint-policy` — requires `llm` · `sessionPersistence` · `sessions` · `tools` ([`packages/session/session-checkpoint-policy/src/index.ts`](../packages/session/session-checkpoint-policy/src/index.ts))

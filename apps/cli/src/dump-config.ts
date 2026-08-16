@@ -7,16 +7,21 @@
  */
 
 import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
 import {
+  homePatchPath,
   loadOptionalPatches,
   loadOverlayPatches,
+  prepareProfile,
+  PROFILE_ROOT_FILENAME,
   renderConfigDump,
   type ConfigDumpLayer,
 } from '@deepseek-ai/dsh-app-boot'
-import { homePatchPath, prepareProfile, PROFILE_ROOT_FILENAME } from './profile-boot.ts'
 
 const NAME = 'dsh'
+/** This dsh app's package.json — the install anchor the flat module fallback walks. */
+const INSTALL_ANCHOR = fileURLToPath(new URL('../package.json', import.meta.url))
 
 /* v8 ignore start -- built-bin acceptance drives this boot-free dispatch */
 /**
@@ -28,7 +33,7 @@ const NAME = 'dsh'
  * @param patches - `--patch` overlay paths, in argv order.
  */
 export function runDumpConfig(profile: string, defaultOnly: boolean, patches: readonly string[]): void {
-  const loaded = prepareProfile(profile, !defaultOnly)
+  const loaded = prepareProfile(NAME, INSTALL_ANCHOR, profile, !defaultOnly)
   const layers: ConfigDumpLayer[] = loaded.layers.map(layer => ({
     label: layer.packageName,
     patches: layer.patches,

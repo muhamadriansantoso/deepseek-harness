@@ -44,8 +44,15 @@ interface PluginInvocation {
   args: string[]
 }
 
+/** Boot the runner profile (a laptop agent whose LLM is proxied to a server). */
+interface RunnerInvocation {
+  mode: 'runner'
+  /** Everything after `connect`, verbatim — parsed by the runner startup plugin. */
+  args: string[]
+}
+
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
-export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation | RunnerInvocation
 
 /** Launcher flags shared by the default command and the `web` alias. */
 interface BootOptions {
@@ -178,6 +185,23 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
       if (options.profile === '') program.error('error: --profile needs a name')
       if (args.length === 0) program.error('error: plugin needs pnpm arguments to forward (e.g. add <package>)')
       resolved = { mode: 'plugin', profile: options.profile, args }
+    })
+
+  // `dsh runner connect ...` boots the runner profile (a laptop agent whose LLM
+  // is proxied to a server). The launcher only recognizes the `connect`
+  // subcommand; everything after it reaches the runner startup plugin verbatim,
+  // which parses --server/--user/--workspace/--device and the task positional.
+  const runner = program.command('runner').description('boot the laptop runner profile (a laptop agent whose model calls are proxied to a dsh server)')
+  const runnerConnect = runner.command('connect').description('connect this laptop to a dsh server and run a task against the local workspace')
+  runnerConnect
+    .helpOption(false)
+    .allowUnknownOption()
+    .passThroughOptions()
+    .enablePositionalOptions()
+    .argument('[args...]', 'arguments for the runner startup plugin (see: dsh runner connect --help)')
+    .action((args: string[]) => {
+      rejectParentOptions('runner')
+      resolved = { mode: 'runner', args }
     })
 
   try {

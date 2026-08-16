@@ -10,18 +10,29 @@ import { bridge, DEFAULT_MAX_REQUEST_BODY_BYTES } from './http-bridge.ts'
 import { assertTrustedAuthority, isTrustedApiRequest } from './api-request-trust.ts'
 import { HostConnectionService } from './rpc-host.ts'
 import { rejectWebSocketUpgrade, WebSocketDownlinks } from './websocket-downlink.ts'
+import { withPrincipal } from '@deepseek-ai/dsh-principal'
 
 export type {
+  ConnectionAuthHook,
   ConnectionRpcAuthority,
   ConnectionRpcEndpointMatcher,
   ConnectionRpcHandler,
   ConnectionRpcHandlerOptions,
   HostConnectionHandle,
   HostConnectionRpc,
+  ApiTrustFenceRequest,
 } from './rpc.ts'
 export { HostConnectionService } from './rpc-host.ts'
+export { withPrincipal, currentPrincipal } from '@deepseek-ai/dsh-principal'
 
 export { API_PATH, HOST_EVENTS_PATH, MUX_EVENTS_PATH } from './api-path.ts'
+
+// The fence and WebSocket-reject primitives are shared with sibling host
+// packages that gate their own upgrade routes (e.g. dsh-runner-hub's
+// /runner/channel). Re-exported from the built main so consumers compose
+// against the compiled output, not the /src/*.ts source.
+export { isTrustedApiRequest, assertTrustedAuthority } from './api-request-trust.ts'
+export { rejectWebSocketUpgrade } from './websocket-downlink.ts'
 
 /** Stable Cordis plugin name. */
 export const name = 'client-connection'
@@ -153,9 +164,20 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
           headers: { connection: 'Upgrade', upgrade: 'websocket' },
         })
       }
+      // Auth hook: after the fence's rebinding check, an auth plugin may
+      // reject requests lacking a valid session. When no auth plugin is
+      // composed, connection.authenticate returns undefined (no-op). The
+      // resolved userId is carried through the request's async tree via the
+      // principal store so downstream RPC handlers and capability providers can
+      // scope by user; undefined means "no auth composed / single-user" and
+      // every scoping guard runs with isolation OFF.
+      const principal = await connection.authenticate({ headers: request.headers })
+      if (principal === null) {
+        return new Response('unauthorized', { status: 401 })
+      }
       const apiProxy = ctx.get('apiProxy')
       if (apiProxy === undefined) return new Response('not found', { status: 404 })
-      return toFetchHandler(apiProxy).fetch(request)
+      return withPrincipal(principal, () => toFetchHandler(apiProxy).fetch(request))
     },
   })
   const route: WebRoute = {
@@ -165,6 +187,11 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
       if (!isTrustedApiRequest(req, trustedHosts)) {
         res.writeHead(403)
         res.end('forbidden')
+        return
+      }
+      if (!await connection.checkAuth({ headers: req.headers })) {
+        res.writeHead(401)
+        res.end('unauthorized')
         return
       }
       await bridge(req, res, fetchHandler, maxRequestBodyBytes)
@@ -180,12 +207,21 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
     ): void => {
       apiCtx.effect(() => apiCtx.webServer.registerUpgrade({
         path,
-        handler: (req, socket, head) => {
+        handler: async (req, socket, head) => {
           if (!isTrustedApiRequest(req, trustedHosts)) {
             rejectWebSocketUpgrade(socket)
             return
           }
-          return handle(req, socket, head)
+          // Establish the request-scoped principal on the upgrade path so the
+          // mux/host SSE handlers downstream can scope frames by user. A
+          // rejecting hook rejects the upgrade; an admitting hook with no
+          // identity (legacy `true` / no auth composed) runs isolation OFF.
+          const principal = await connection.authenticate({ headers: req.headers })
+          if (principal === null) {
+            rejectWebSocketUpgrade(socket)
+            return
+          }
+          return withPrincipal(principal, () => handle(req, socket, head))
         },
       }), `client-connection: ${path} WebSocket`)
     }

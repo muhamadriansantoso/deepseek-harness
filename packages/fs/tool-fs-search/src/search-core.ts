@@ -27,6 +27,9 @@ import type { RetainedItems } from '@deepseek-ai/dsh-output-retention'
 import type { SubprocessHandle, SubprocessOutcome, SubprocessOutputRead, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
 import type { SaveTextSpill, SpillRef } from '@deepseek-ai/dsh-spill'
 import type { ToolExecution } from '@deepseek-ai/dsh-tools'
+import { currentPrincipal } from '@deepseek-ai/dsh-principal'
+import type { RunnerConnection } from '@deepseek-ai/dsh-runner-hub'
+import { RemoteSubprocessRuntime } from '@deepseek-ai/dsh-subprocess-remote'
 
 /**
  * Default cap on the complete raw `rg` stdout the tools will parse (the
@@ -174,6 +177,82 @@ export function resolveRgPath(): Promise<string> {
 }
 
 /**
+ * Remote subprocess runtimes cached per live runner connection, so a remote
+ * session does not re-allocate the adapter per search. The connection is a
+ * process-global singleton per `(userId, deviceId)`, so the connection object
+ * itself is a stable cache key. Mirrors `bash-local`'s `remoteRuntimes` map.
+ */
+const remoteRuntimes = new WeakMap<RunnerConnection, RemoteSubprocessRuntime>()
+
+/**
+ * The runner connection backing `cwd` when it belongs to a remote (laptop)
+ * workspace, else `undefined` (a local host path, or no registry/hub composed).
+ * This is the search-tool routing seam: a `glob`/`grep` whose session cwd is a
+ * laptop path must run ripgrep ON the laptop (the files live there), so its
+ * spawn is delegated over the runner channel instead of running on the host.
+ *
+ * Routing lives at the TOOL level (not the `subprocess-local` provider) because
+ * `subprocess-local.spawn` is a general primitive shared with subagent/LSP
+ * spawns, whose cwd ALSO resolves to a remote session's laptop path but whose
+ * binaries (`claude`/`codex`/an LSP server) must run on the HOST. A
+ * cwd-prefix route at the provider would wrongly ship those spawns to the
+ * laptop. Only the search tool's `rg` is unambiguously laptop-bound.
+ *
+ * `currentPrincipal()` (the request-scoped ALS) owner-scopes the match so a
+ * tool call routes only to the calling user's laptop; `undefined` (no auth
+ * composed / in-process test) disables routing entirely — search runs locally,
+ * the pre-remote behavior.
+ */
+function remoteConnectionForCwd(ctx: Context, cwd: string): RunnerConnection | undefined {
+  const registry = ctx.get('workspaceRegistry')
+  if (registry === undefined) return undefined
+  const remote = registry.findRemoteByPath(cwd, currentPrincipal())
+  if (remote === undefined) return undefined
+  const conn = ctx.get('runnerHub')?.getConnection(remote.userId, remote.deviceId)
+  if (conn === undefined || !conn.isOpen) {
+    throw new SearchError(
+      `device offline: cannot search the remote workspace "${cwd}" while device "${remote.deviceId}" is disconnected`,
+      'SEARCH_FAILED',
+    )
+  }
+  return conn
+}
+
+/** The cached {@link RemoteSubprocessRuntime} for one connection (allocates on first use). */
+function remoteRuntime(ctx: Context, conn: RunnerConnection): RemoteSubprocessRuntime {
+  const existing = remoteRuntimes.get(conn)
+  if (existing !== undefined) return existing
+  // Construct on an ISOLATED child context so the remote runtime's
+  // `super(ctx, 'subprocess')` Service registration lands in a private scope
+  // instead of colliding with the host's already-registered
+  // `LocalSubprocessRuntime` (a same-name `ctx.provide` throws "service
+  // 'subprocess' has been registered"). Only `.spawn()` is ever called on this
+  // instance; the isolation keeps that one registration off the host scope.
+  const created = new RemoteSubprocessRuntime(ctx.isolate('subprocess'), conn)
+  remoteRuntimes.set(conn, created)
+  return created
+}
+
+/**
+ * Resolve the ripgrep binary path that the machine running the spawn should
+ * invoke. For a local search that is this host's packaged
+ * `@vscode/ripgrep` ({@link resolveRgPath}); for a remote search it is the
+ * LAPTOP's packaged ripgrep, resolved over the runner channel so the hub never
+ * assumes a host path exists on a different machine. Both processes pull
+ * `@vscode/ripgrep` transitively via `dsh-base`, so the laptop resolves the
+ * same vendored binary locally.
+ */
+async function resolveRgBinary(conn: RunnerConnection | undefined): Promise<string> {
+  if (conn === undefined) return resolveRgPath()
+  const result = await conn.call('subprocess.resolveRgPath', undefined) as { path?: string } | undefined
+  const path = result?.path
+  if (typeof path !== 'string' || path.length === 0) {
+    throw new SearchError('grep/glob could not resolve the laptop\'s packaged ripgrep binary', 'SEARCH_FAILED')
+  }
+  return path
+}
+
+/**
  * Run the packaged ripgrep binary with a plain argv vector and return its
  * complete raw stdout. The working directory is the calling agent's session
  * cwd (`exec.agent.session.header.cwd`) when available, else
@@ -222,10 +301,18 @@ export async function runRipgrep(
   }
   const cwd = exec.agent?.session.header.cwd
   const workdir = cwd ?? process.cwd()
+  // Route the ripgrep spawn to the laptop when the session's cwd belongs to a
+  // remote workspace: the searched files live on the laptop, so rg must run
+  // there. `remoteConnectionForCwd` owner-scopes the match (only the calling
+  // user's laptop) and throws SEARCH_FAILED when that device is offline. When
+  // undefined (local workspace, or no auth composed / in-process test), rg
+  // runs on this host — the pre-remote behavior.
+  const remoteConn = remoteConnectionForCwd(ctx, workdir)
+  const spawnRuntime = remoteConn === undefined ? ctx.subprocess : remoteRuntime(ctx, remoteConn)
   let handle: SubprocessHandle
   try {
-    handle = ctx.subprocess.spawn({
-      argv: [await resolveRgPath(), '--no-config', ...argv],
+    handle = spawnRuntime.spawn({
+      argv: [await resolveRgBinary(remoteConn), '--no-config', ...argv],
       cwd: workdir,
       stdio: {
         stdin: 'ignore',
@@ -245,13 +332,13 @@ export async function runRipgrep(
     if (exec.signal.aborted) {
       throw new SearchError(`${toolName} was aborted before completion (tool timeout or caller cancellation)`, 'SEARCH_ABORTED')
     }
-    throw new SearchError(`${toolName} could not start its search command (ripgrep launch failed)`, 'SEARCH_FAILED', { cause: error })
+    throw new SearchError(`${toolName} could not start its search command (ripgrep launch failed): ${error instanceof Error ? error.message : String(error)}`, 'SEARCH_FAILED', { cause: error })
   }
   let outcome: SubprocessOutcome
   try {
     outcome = await handle.done
   } catch (error: unknown) {
-    throw new SearchError(`${toolName} could not start its search command (ripgrep launch failed)`, 'SEARCH_FAILED', { cause: error })
+    throw new SearchError(`${toolName} could not start its search command (ripgrep launch failed): ${error instanceof Error ? error.message : String(error)}`, 'SEARCH_FAILED', { cause: error })
   }
   const stdout = handle.collected.stdout?.readFrom(0)
   const stderr = handle.collected.stderr?.readFrom(0)

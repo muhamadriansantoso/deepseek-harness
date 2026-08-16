@@ -109,6 +109,8 @@ export class WorkspaceRegistry extends Service {
       this.sessionPaths.set(id, path)
       this.invalidSessionPaths.delete(id)
     },
+    checkRemote: (userId, deviceId) =>
+      Promise.resolve(this.ctx.get('runnerHub')?.isDeviceOnline(userId, deviceId) ?? false),
   }
 
   constructor(ctx: Context) {
@@ -155,12 +157,33 @@ export class WorkspaceRegistry extends Service {
   // (.agents/notes/implemented/simplification/2026-07-31-one-route-to-add-a-workspace.md);
   // drop the parameter with its @param clause and the `create(path, title?)`
   // lines in this package's README pair.
-  async create(path: string, title?: string): Promise<Workspace> {
+  async create(path: string, title?: string, owner?: string): Promise<Workspace> {
     const canonical = await realpathNormalize(path)
     if (!(await stat(canonical)).isDirectory()) {
       throw new Error(`cannot create a workspace at '${canonical}': path is not a directory`)
     }
-    return await this.enqueueOperation(() => this.createCanonical(canonical, title))
+    return await this.enqueueOperation(() => this.createCanonical(canonical, title, undefined, owner))
+  }
+
+  /**
+   * Create a workspace backed by a runner device. The path is a LAPTOP-side
+   * directory, stored verbatim: host-side `realpath`/`stat` never apply (the
+   * path may not exist on this host at all), and the caller is responsible
+   * for verifying it on the device. The title defaults to the full path so
+   * the sidebar shows the laptop directory. Repeated calls for the same raw
+   * path return the existing entity; a path already claimed by a different
+   * workspace is a registry invariant violation.
+   * @param path - Laptop-side directory to own, as the device reported it.
+   * @param remote - The hub account + device that backs the workspace.
+   * @param title - Display title used only when a new record is created.
+   * @returns the existing or newly durable workspace.
+   */
+  createRemote(
+    path: string,
+    remote: { userId: string; deviceId: string },
+    title?: string,
+  ): Promise<Workspace> {
+    return this.enqueueOperation(() => this.createCanonical(path, title ?? path, remote, remote.userId))
   }
 
   /**
@@ -170,6 +193,44 @@ export class WorkspaceRegistry extends Service {
    */
   get(id: WorkspaceId): Workspace | undefined {
     return this.entities.get(id)
+  }
+
+  /**
+   * Synchronously resolve the owning userId of a session from the in-memory
+   * index, with no filesystem or persistence reads. This is the SSE-filtering
+   * primitive: the mux/host event listeners push frames synchronously and
+   * cannot await the async {@link resolveByPath}/`realpath` path, so a
+   * session-scoped frame is delivered only to queues whose principal equals
+   * this owner (or is undefined).
+   *
+   * Resolution, in order: a device-marked header (remote) matches a workspace
+   * facet by verbatim laptop path and returns its `remote.userId`; otherwise
+   * the session's canonical path is looked up in the startup/live header index
+   * and matched against a workspace entity's `path`, returning its `owner`.
+   * Returns `undefined` when the session has no indexed path, no owning
+   * workspace, or the workspace is a legacy owner-less record — callers treat
+   * that as "owner unknown, deliver" so cold and shared paths keep working.
+   * @param sessionId - the session whose owner is asked.
+   * @param header - the session header carrying the cwd/device signal; when
+   * omitted only the canonical-path index is consulted.
+   * @returns the owning userId, or undefined when unresolvable / shared.
+   */
+  ownerForSession(
+    sessionId: SessionId,
+    header?: { readonly cwd?: string; readonly deviceId?: string },
+  ): string | undefined {
+    // A device-marked header names a laptop path: resolve via the remote facet
+    // (verbatim string match, no host realpath) without needing the index.
+    if (header?.deviceId !== undefined && header.cwd !== undefined) {
+      const remote = this.findRemoteByPath(header.cwd)
+      if (remote !== undefined) return remote.userId
+    }
+    const path = this.sessionPaths.get(sessionId)
+    if (path === undefined) return undefined
+    for (const entity of this.entities.values()) {
+      if (entity.path === path) return entity.owner
+    }
+    return this.findRemoteByPath(path)?.userId
   }
 
   /**
@@ -274,17 +335,99 @@ export class WorkspaceRegistry extends Service {
    * @param path - Existing directory path in any spelling.
    * @returns the workspace owning the canonical path, when one exists.
    */
-  async resolveByPath(path: string): Promise<Workspace | undefined> {
+  async resolveByPath(path: string, owner?: string): Promise<Workspace | undefined> {
     const canonical = await realpathNormalize(path)
     for (const entity of this.entities.values()) {
-      if (entity.path === canonical) return entity
+      if (entity.path !== canonical) continue
+      // Owner-aware reuse: when a caller scopes by owner, reuse only a workspace
+      // they own (or a legacy owner-less record, treated as shared). A same-path
+      // workspace owned by another user is invisible here so the caller creates a
+      // separate (path, owner) workspace instead of adopting the other user's.
+      if (owner !== undefined && entity.owner !== undefined && entity.owner !== owner) continue
+      return entity
     }
     return undefined
   }
 
-  private async createCanonical(canonical: string, title?: string): Promise<WorkspaceEntity> {
+  /**
+   * Recover the runner device backing a path, when the path belongs to a
+   * remote (laptop) workspace. Unlike {@link resolveByPath}, this NEVER touches
+   * the host filesystem: a remote workspace's path is a laptop-side directory
+   * stored verbatim (it may not exist on this host at all), so `realpath` would
+   * reject. The match is a verbatim string comparison — exact, then prefix
+   * (the path is the workspace root or a descendant of it) — mirroring the
+   * remote-aware `indexHeader`/`attachSession` validations.
+   *
+   * This is the host capability providers' routing signal: bash-local and
+   * fs-local ask whether a workdir/target path is remote, and if so route the
+   * operation over the runner channel to the laptop instead of executing
+   * locally. Local workspaces (no `remote` facet) are skipped, so a path that
+   * belongs to an ordinary host workspace returns `undefined`.
+   * @param path - A workdir or target path, in any spelling the caller holds.
+   * @returns the device + account backing the path, when it is a remote workspace.
+   */
+  /**
+   * Recover the runner device backing a path, when the path belongs to a
+   * remote (laptop) workspace. Unlike {@link resolveByPath}, this NEVER touches
+   * the host filesystem: a remote workspace's path is a laptop-side directory
+   * stored verbatim (it may not exist on this host at all), so `realpath` would
+   * reject. The match is a verbatim string comparison — exact, then prefix
+   * (the path is the workspace root or a descendant of it) — mirroring the
+   * remote-aware `indexHeader`/`attachSession` validations.
+   *
+   * This is the host capability providers' routing signal: bash-local and
+   * fs-local ask whether a workdir/target path is remote, and if so route the
+   * operation over the runner channel to the laptop instead of executing
+   * locally. Local workspaces (no `remote` facet) are skipped, so a path that
+   * belongs to an ordinary host workspace returns `undefined`.
+   *
+   * When `callerUserId` is provided, only a workspace whose `remote.userId`
+   * matches is returned — so a tool call on user A's remote session never
+   * routes to user B's laptop when two users attached workspaces at the same
+   * laptop path. Omit `callerUserId` for the unscoped lookup (single-user /
+   * auth-less deployments, or where the caller has already established the
+   * owning user).
+   * @param path - A workdir or target path, in any spelling the caller holds.
+   * @param callerUserId - The requesting user; scopes the match to their workspaces.
+   * @returns the device + account backing the path, when it is a remote workspace.
+   */
+  findRemoteByPath(path: string, callerUserId?: string): { userId: string; deviceId: string } | undefined {
+    if (path.length === 0) return undefined
     for (const entity of this.entities.values()) {
-      if (entity.path === canonical) return entity
+      const remote = entity.remote
+      if (remote === undefined) continue
+      if (callerUserId !== undefined && remote.userId !== callerUserId) continue
+      const root = entity.path
+      if (path === root) return remote
+      // Descendant match: a subpath of the workspace root. POSIX-join the
+      // root so a literal prefix (`/a` matching `/ab`) never fires.
+      const sep = root.endsWith('/') ? root : `${root}/`
+      if (path.startsWith(sep)) return remote
+    }
+    return undefined
+  }
+
+  private async createCanonical(
+    canonical: string,
+    title?: string,
+    remote?: { userId: string; deviceId: string },
+    owner?: string,
+  ): Promise<WorkspaceEntity> {
+    for (const entity of this.entities.values()) {
+      if (entity.path !== canonical) continue
+      // Owner-aware reuse mirrors resolveByPath: a defined owner reuses only its
+      // own workspace (or a shared legacy record) at this path, never another
+      // user's. An undefined owner (auth-less) reuses the first match as before.
+      if (owner !== undefined && entity.owner !== undefined && entity.owner !== owner) continue
+      // Lazy-stamp: a defined owner reusing a legacy (owner-less) record adopts
+      // it durably — the runner-attach path (`createRemote`) and the
+      // `workspace.create` path (`create`) both reach here, so this is the one
+      // place that closes the gap where a pre-owner workspace stayed shared
+      // after the owning user re-attached it.
+      if (owner !== undefined && entity.owner === undefined) {
+        await entity.setOwner(owner)
+      }
+      return entity
     }
 
     const workspaceName = title ?? basename(canonical)
@@ -292,13 +435,26 @@ export class WorkspaceRegistry extends Service {
     const state = this.requireState()
     const id = WorkspaceId(randomUUID())
     const now = new Date().toISOString()
-    const record: WorkspaceRecord = {
-      path: canonical,
-      title: workspaceName,
-      sessionIds: [],
-      createdAt: now,
-      updatedAt: now,
-    }
+    const record: WorkspaceRecord = remote === undefined
+      ? {
+        path: canonical,
+        title: workspaceName,
+        sessionIds: [],
+        createdAt: now,
+        updatedAt: now,
+        ...owner === undefined ? {} : { owner },
+      }
+      : {
+        path: canonical,
+        title: workspaceName,
+        sessionIds: [],
+        createdAt: now,
+        updatedAt: now,
+        remote,
+        // A remote workspace is owned by the hub account that attached the
+        // laptop folder (remote.userId); stamp it so per-user scoping matches.
+        owner: remote.userId,
+      }
     const entity = new WorkspaceEntity(this.host, id, record)
     this.entities.set(id, entity)
     const pendingState: WorkspaceDomainState = {
@@ -574,6 +730,15 @@ export class WorkspaceRegistry extends Service {
     this.sessionPaths.delete(header.id)
     if (header.cwd === undefined) {
       this.invalidSessionPaths.set(header.id, 'header has no cwd')
+      return
+    }
+    // A device-marked header names a laptop path this host can never
+    // realpath/stat; the device marker itself is the correctness guarantee
+    // (the same marker gates attach validation) and the string is indexed
+    // verbatim so remote sessions keep their workspace membership.
+    if (header.deviceId !== undefined) {
+      this.sessionPaths.set(header.id, header.cwd)
+      this.invalidSessionPaths.delete(header.id)
       return
     }
     try {

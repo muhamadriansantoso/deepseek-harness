@@ -1,0 +1,57 @@
+{
+  "name": "@deepseek-ai/dsh-runner-hub",
+  "description": "Server-side hub for the remote-workspace runner: per-user WebSocket connections, an LLM gateway that holds the central API key, the model catalog source of truth, skill/MCP inventory sync, and the super-admin role gate",
+  "version": "0.1.0-rc.5",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/deepseek-ai/deepseek-harness.git",
+    "directory": "packages/runner/runner-hub"
+  },
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./invariant": {
+      "types": "./lib/types/invariant.d.ts",
+      "default": "./lib/invariant.js"
+    },
+    "./src/*": "./src/*",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/invariant.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.21.0",
+    "@deepseek-ai/schemastery": "workspace:^"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-host-webserver": "workspace:^",
+    "@deepseek-ai/dsh-client-connection": "workspace:^",
+    "@deepseek-ai/dsh-auth-simple": "workspace:^",
+    "@deepseek-ai/dsh-llm": "workspace:^",
+    "@deepseek-ai/dsh-skill": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@deepseek-ai/cordis": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-host-webserver": "workspace:^",
+    "@deepseek-ai/dsh-client-connection": "workspace:^",
+    "@deepseek-ai/dsh-auth-simple": "workspace:^",
+    "@deepseek-ai/dsh-llm": "workspace:^",
+    "@deepseek-ai/dsh-skill": "workspace:^",
+    "@deepseek-ai/dsh-invariants": "workspace:^",
+    "@types/ws": "^8.18.1",
+    "@deepseek-ai/cordis": "workspace:^"
+  }
+}

@@ -12,6 +12,7 @@
 
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
 import {
   DEFAULT_PROFILE_BUNDLES,
@@ -23,9 +24,10 @@ import {
   writeProfileManifest,
   type ProfileManifest,
 } from '@deepseek-ai/dsh-app-boot'
-import { INSTALL_ANCHOR } from './profile-boot.ts'
 
 const NAME = 'dsh'
+/** This dsh app's package.json — the install anchor the flat module fallback walks. */
+const INSTALL_ANCHOR = fileURLToPath(new URL('../package.json', import.meta.url))
 
 /**
  * Whether a resolved dependency exports a profile patch, i.e. is a bundle.

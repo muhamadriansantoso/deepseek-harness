@@ -10,13 +10,22 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { WorkspaceId } from './types.ts'
 
+
 /** Workspace id schema at the durable boundary; branding has no runtime representation. */
 const workspaceId = z.string().transform(value => value as WorkspaceId)
 
 /**
  * Durable shape of one workspace record. `path` is the `fs.realpath` canon
  * stamped at create; `sessionIds` is the ordered ownership account (array
- * order is display order); timestamps are ISO-8601 strings.
+ * order is display order); timestamps are ISO-8601 strings. `remote` marks a
+ * workspace backed by a runner device (a laptop): its `path` is the raw laptop
+ * path stored verbatim (host-side `realpath`/`stat` never apply), and the
+ * facet is the durable workspace→device mapping that binds sessions to the
+ * device's capability providers. `owner` is the authenticated userId that owns
+ * the workspace, the per-user scoping key (for remote workspaces it equals
+ * `remote.userId`). Additive and optional so records written before the field
+ * parse unchanged — undefined owner is "legacy/shared", visible to every
+ * authenticated user, and lazily stamped on first mutation by a defined user.
  */
 export const workspaceRecord = z.object({
   path: z.string(),
@@ -24,6 +33,11 @@ export const workspaceRecord = z.object({
   sessionIds: z.array(z.string().transform(SessionId)),
   createdAt: z.string(),
   updatedAt: z.string(),
+  remote: z.object({
+    userId: z.string(),
+    deviceId: z.string(),
+  }).optional(),
+  owner: z.string().optional(),
 })
 
 /** One stored workspace record, inferred from {@link workspaceRecord}. */
@@ -66,7 +80,7 @@ export type WorkspaceDomainState = z.infer<typeof workspaceDomainState>
  */
 export const workspaceDomainSpec = defineDomain({
   name: 'workspace',
-  version: 2,
+  version: 3,
   global: {
     schema: workspaceDomainState,
     initial: { initialized: false, workspaceIds: [], archivedSessionIds: [] },

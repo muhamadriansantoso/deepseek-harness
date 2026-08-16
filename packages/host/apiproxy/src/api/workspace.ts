@@ -33,6 +33,11 @@ export interface WorkspaceView {
   createdAt: string
   /** ISO-8601 last-mutation instant. */
   updatedAt: string
+  /**
+   * The authenticated userId that owns this workspace, or `undefined` for a
+   * legacy/shared record or an auth-less deployment. The per-user scoping key.
+   */
+  owner?: string
 }
 
 /** Workspace-domain unary methods (the map keys workspace.* of RpcMethodMap). */

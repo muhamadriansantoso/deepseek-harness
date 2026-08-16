@@ -578,6 +578,9 @@ export const TYPE_LINK_EXEMPTIONS: Readonly<Record<string, string>> = {
   WorkflowAgentEndInfo: 'event-local snapshot is owned by packages/workflow/workflow/src/index.ts',
   WorkflowAgentInfo: 'event-local snapshot is owned by packages/workflow/workflow/src/index.ts',
   WorkflowResultInfo: 'event-local snapshot is owned by packages/workflow/workflow/src/index.ts',
+  RunnerConnection: 'per-(user,device) WS handle is owned by packages/runner/runner-hub/src/connection.ts',
+  SyncedSkill: 'synced skill payload is owned by packages/runner/runner-hub/src/protocol.ts',
+  SyncedMcpServer: 'synced MCP server config is owned by packages/runner/runner-hub/src/protocol.ts',
 }
 
 /** Repository data policy consumed by the Cordis catalog projector. */

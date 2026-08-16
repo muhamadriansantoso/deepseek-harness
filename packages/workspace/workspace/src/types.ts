@@ -95,9 +95,35 @@ export interface Workspace {
   detachSession(sessionId: SessionId): Promise<void>
 
   /**
+   * The runner device backing this workspace, when it is a remote (laptop)
+   * workspace. `undefined` for ordinary host-directory workspaces. For a
+   * remote workspace {@link path} is the laptop-side directory stored
+   * verbatim (never host-`realpath`ed), and {@link status} reports the device
+   * connection rather than a host directory check.
+   */
+  readonly remote: { readonly userId: string; readonly deviceId: string } | undefined
+
+  /**
+   * The authenticated userId that owns this workspace (the per-user scoping
+   * key); `undefined` for a legacy/shared record or an auth-less deployment.
+   * For a remote workspace it equals {@link remote}'s `userId`.
+   */
+  readonly owner: string | undefined
+
+  /**
+   * Stamp the owning userId durably. Used to lazily adopt a legacy
+   * (owner-less) record into the first authenticated user who mutates it.
+   * Idempotent when the owner is already set to `userId`.
+   * @param userId - The owning user.
+   * @returns resolution after durability.
+   */
+  setOwner(userId: string): Promise<void>
+
+  /**
    * Live directory check, uncached: whether {@link path} currently exists and
    * is a directory. A missing directory never mutates the record — the
-   * directory may only be temporarily moved.
+   * directory may only be temporarily moved. For a remote workspace the check
+   * is whether its backing device is currently connected.
    * @returns `'ok'` when the directory exists, `'missing-dir'` otherwise.
    */
   status(): Promise<'ok' | 'missing-dir'>

@@ -329,7 +329,10 @@ function mountDetail(error: unknown): string {
  * @throws when `agentCtx` carries no scope, a row is unusable, or a row
  * published a service into the root realm.
  */
-export async function mountPreset(agentCtx: Context, preset: AgentPreset): Promise<void> {
+export async function mountPreset(
+  agentCtx: Context,
+  preset: AgentPreset,
+): Promise<void> {
   const scope = scopeOf(agentCtx)
   if (scope === undefined) {
     throw new Error(

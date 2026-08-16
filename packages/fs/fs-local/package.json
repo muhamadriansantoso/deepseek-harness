@@ -34,7 +34,11 @@
   "peerDependencies": {
     "@deepseek-ai/dsh-fs": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
-    "@deepseek-ai/cordis": "workspace:^"
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-workspace": "workspace:^",
+    "@deepseek-ai/dsh-fs-remote": "workspace:^",
+    "@deepseek-ai/dsh-runner-hub": "workspace:^",
+    "@deepseek-ai/dsh-principal": "workspace:^"
   },
   "dependencies": {
     "koffi": "^3.1.0",
@@ -44,6 +48,10 @@
     "@deepseek-ai/dsh-fs": "workspace:^",
     "@deepseek-ai/dsh-invariants": "workspace:^",
     "@deepseek-ai/dsh-llm": "workspace:^",
-    "@deepseek-ai/cordis": "workspace:^"
+    "@deepseek-ai/cordis": "workspace:^",
+    "@deepseek-ai/dsh-workspace": "workspace:^",
+    "@deepseek-ai/dsh-fs-remote": "workspace:^",
+    "@deepseek-ai/dsh-runner-hub": "workspace:^",
+    "@deepseek-ai/dsh-principal": "workspace:^"
   }
 }

@@ -60,6 +60,17 @@ export interface WorkspaceEntityHost {
    * @param path - Canonical existing directory from the immutable header cwd.
    */
   rememberSessionPath(id: SessionId, path: string): void
+
+  /**
+   * Whether the runner device backing a remote workspace is currently
+   * connected. Consulted by {@link Workspace.status} for remote records; a
+   * registry without a composed runner hub answers `false` (no device can be
+   * checked).
+   * @param userId - Hub account hosting the device connection.
+   * @param deviceId - The device whose liveness is asked.
+   * @returns whether the device's channel is open.
+   */
+  checkRemote(userId: string, deviceId: string): Promise<boolean>
 }
 
 /** Chain-slot abort sentinel thrown by the update fn when the record needs no change; only `mutate` observes it. */
@@ -102,6 +113,26 @@ export class WorkspaceEntity implements Workspace {
     return this.record.sessionIds.filter(id => this.host.sessionPath(id) === this.record.path)
   }
 
+  /**
+   * The runner device backing this workspace, when it is a remote (laptop)
+   * workspace. `undefined` for ordinary host-directory workspaces.
+   */
+  get remote(): { readonly userId: string; readonly deviceId: string } | undefined {
+    return this.record.remote
+  }
+
+  /**
+   * The authenticated userId that owns this workspace, the per-user scoping
+   * key. For a remote workspace it equals {@link remote}'s `userId` (the user
+   * who attached their laptop folder). `undefined` marks a legacy record
+   * (written before ownership was stamped) or an auth-less single-user
+   * deployment; such records are shared — visible to every authenticated user —
+   * and lazily stamped to the first user who mutates one.
+   */
+  get owner(): string | undefined {
+    return this.record.owner
+  }
+
   async setTitle(title: string): Promise<void> {
     await this.mutate(record => ({ ...record, title }))
   }
@@ -119,29 +150,49 @@ export class WorkspaceEntity implements Workspace {
           + 'its stored header carries no cwd to validate against',
         )
       }
-      let cwd: string
-      try {
-        cwd = await realpathNormalize(header.cwd)
-      } catch (error) {
-        throw new Error(
-          `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + `its cwd '${header.cwd}' does not resolve, so it cannot be validated`,
-          { cause: error },
-        )
+      // A remote record's path lives on the laptop, never on this host: the
+      // host-side realpath/stat canon cannot apply. The session header carries
+      // the same device marker, so its string-equal cwd IS the validation.
+      if (this.record.remote !== undefined) {
+        if (header.deviceId !== this.record.remote.deviceId) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its header device '${header.deviceId ?? '(none)'}' does not match `
+            + `workspace device '${this.record.remote.deviceId}'`,
+          )
+        }
+        if (header.cwd !== this.record.path) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its cwd '${header.cwd}' differs from the workspace path`,
+          )
+        }
+        this.host.rememberSessionPath(sessionId, header.cwd)
+      } else {
+        let cwd: string
+        try {
+          cwd = await realpathNormalize(header.cwd)
+        } catch (error) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its cwd '${header.cwd}' does not resolve, so it cannot be validated`,
+            { cause: error },
+          )
+        }
+        if (!(await stat(cwd)).isDirectory()) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its cwd '${header.cwd}' is not a directory`,
+          )
+        }
+        if (cwd !== this.record.path) {
+          throw new Error(
+            `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
+            + `its cwd resolves to '${cwd}'`,
+          )
+        }
+        this.host.rememberSessionPath(sessionId, cwd)
       }
-      if (!(await stat(cwd)).isDirectory()) {
-        throw new Error(
-          `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + `its cwd '${header.cwd}' is not a directory`,
-        )
-      }
-      if (cwd !== this.record.path) {
-        throw new Error(
-          `cannot attach session '${sessionId}' to workspace '${this.record.path}': `
-          + `its cwd resolves to '${cwd}'`,
-        )
-      }
-      this.host.rememberSessionPath(sessionId, cwd)
     }
     await this.mutate(record => record.sessionIds.includes(sessionId)
       ? record
@@ -177,7 +228,17 @@ export class WorkspaceEntity implements Workspace {
       : record)
   }
 
+  async setOwner(userId: string): Promise<void> {
+    await this.mutate(record => record.owner === userId ? record : { ...record, owner: userId })
+  }
+
   async status(): Promise<'ok' | 'missing-dir'> {
+    const remote = this.record.remote
+    if (remote !== undefined) {
+      // "The directory exists" is the device being reachable: the path cannot
+      // be stat'd from this host by construction.
+      return (await this.host.checkRemote(remote.userId, remote.deviceId)) ? 'ok' : 'missing-dir'
+    }
     try {
       return (await stat(this.record.path)).isDirectory() ? 'ok' : 'missing-dir'
     } catch {

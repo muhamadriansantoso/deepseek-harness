@@ -1,0 +1,61 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "lib/types"
+  },
+  "include": ["src"],
+  "references": [
+    {
+      "path": "../../../vendor/cosmokit"
+    },
+    {
+      "path": "../../../vendor/cordis"
+    },
+    {
+      "path": "../../../vendor/schemastery"
+    },
+    {
+      "path": "../../util/brand"
+    },
+    {
+      "path": "../../util/launch-environment"
+    },
+    {
+      "path": "../../runtime-diagnostics/invariants"
+    },
+    {
+      "path": "../../llm/llm"
+    },
+    {
+      "path": "../llm-remote"
+    },
+    {
+      "path": "../runner-hub"
+    },
+    {
+      "path": "../../subprocess/subprocess"
+    },
+    {
+      "path": "../../fs/fs"
+    },
+    {
+      "path": "../../fs/tool-fs-search"
+    },
+    {
+      "path": "../../skill/skill"
+    },
+    {
+      "path": "../../mcp/mcp-client"
+    },
+    {
+      "path": "../../bundle/base"
+    },
+    {
+      "path": "../../boot/app-boot"
+    },
+    {
+      "path": "../../boot/cmdline"
+    }
+  ]
+}

@@ -37,6 +37,8 @@ export interface RpcErrorDetailsMap {
   'session-conflict': { sessionId: SessionId; requestedCwd: string; existingCwd?: string }
   'invalid-time-zone': { value: string }
   'workspace-attach-failed': { sessionId: SessionId; workspaceId: string }
+  /** A remote-session prompt while the backing laptop is disconnected. The session stays open. */
+  'device-offline': { sessionId: SessionId }
   'workspace-not-found': { workspaceId: string }
   'workspace-invalid-path': { path: string }
   'workspace-name-conflict': { name: string }

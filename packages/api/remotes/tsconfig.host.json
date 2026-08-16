@@ -51,6 +51,12 @@
     },
     {
       "path": "../../typert/protocol"
+    },
+    {
+      "path": "../../util/principal"
+    },
+    {
+      "path": "../../workspace/workspace"
     }
   ]
 }

@@ -884,6 +884,7 @@ export class SessionStore extends Service {
       ...meta?.origin === undefined ? {} : { origin: meta.origin },
       ...meta?.delegationDepth === undefined ? {} : { delegationDepth: meta.delegationDepth },
       ...meta?.agentPreset === undefined ? {} : { agentPreset: meta.agentPreset },
+      ...meta?.deviceId === undefined ? {} : { deviceId: meta.deviceId },
     }
     return Session.create(sessionId, seed, header)
   }

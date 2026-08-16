@@ -1,0 +1,30 @@
+{
+  "name": "@deepseek-ai/dsh-subprocess-remote",
+  "description": "Subprocess capability seam bound to a laptop runner device: ctx.subprocess provider that proxies spawn/terminate over the runner channel",
+  "version": "0.1.0-rc.6",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/types/**/*.d.ts"
+  ],
+  "dependencies": {
+    "@deepseek-ai/dsh-subprocess": "workspace:^",
+    "@deepseek-ai/dsh-runner-hub": "workspace:^"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "workspace:^"
+  }
+}
