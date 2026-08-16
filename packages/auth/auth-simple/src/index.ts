@@ -370,7 +370,7 @@ async function handleAuthRoute(
     return
   }
   if (subPath === '/logout' && req.method === 'POST') {
-    handleLogout(auth, res)
+    handleLogout(auth, req, res)
     return
   }
   if (subPath === '/me' && req.method === 'GET') {
@@ -417,10 +417,23 @@ async function handleLogin(auth: AuthSimpleService, req: IncomingMessage, res: S
 }
 
 /** POST /api/auth/logout — clear the session cookie. */
-function handleLogout(auth: AuthSimpleService, res: ServerResponse): void {
+function handleLogout(
+  auth: AuthSimpleService,
+  req: IncomingMessage,
+  res: ServerResponse,
+): void {
+  const isHttps = new URL(req.url ?? '/', 'http://x').protocol === 'https:'
+  const parts = [
+    `${auth.cookieName}=`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    'Max-Age=0',
+  ]
+  if (isHttps) parts.push('Secure')
   res.writeHead(200, {
     'content-type': 'application/json',
-    'set-cookie': `${auth.cookieName}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`,
+    'set-cookie': parts.join('; '),
   })
   res.end('{}')
 }

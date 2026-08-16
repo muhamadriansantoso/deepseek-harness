@@ -6,6 +6,7 @@ export type AdminKey =
   | 'userId' | 'role' | 'createdAt' | 'actions' | 'noUsers'
   | 'promote' | 'demote' | 'promoting' | 'user' | 'admin'
   | 'forbidden' | 'notFound'
+  | 'logout' | 'logoutShort' | 'loggingOut'
 
 /** English copy. */
 export const en: Record<AdminKey, string> = {
@@ -28,6 +29,9 @@ export const en: Record<AdminKey, string> = {
   admin: 'admin',
   forbidden: 'Admin only.',
   notFound: 'User not found.',
+  logout: 'Log out',
+  logoutShort: 'Out',
+  loggingOut: 'Logging out…',
 }
 
 /** Simplified Chinese copy. */
@@ -49,4 +53,7 @@ export const zh: Record<AdminKey, string> = {
   admin: 'admin',
   forbidden: 'Admin only.',
   notFound: 'User not found.',
+  logout: '退出登录',
+  logoutShort: '退出',
+  loggingOut: '正在退出…',
 }
