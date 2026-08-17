@@ -121,6 +121,16 @@ export class RunnerConnection {
         if (pending !== undefined) {
           this.pendingUnary.delete(frame.rpcId)
           pending.resolve(frame.result)
+          return
+        }
+        // A streaming method that returns a value (e.g. `fs.streamText`) settles
+        // with `runner-response` rather than `runner-exit` (which carries a
+        // subprocess exit code). A given rpcId is either unary or streaming,
+        // never both, so settling the stream here is unambiguous.
+        const stream = this.pendingStream.get(frame.rpcId)
+        if (stream !== undefined) {
+          this.pendingStream.delete(frame.rpcId)
+          stream.resolve({ type: 'runner-exit', rpcId: frame.rpcId, exitCode: null, signal: null })
         }
         return
       }

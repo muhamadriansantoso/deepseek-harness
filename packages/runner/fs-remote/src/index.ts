@@ -142,7 +142,13 @@ export class RemoteFileSystem extends FileSystem {
           notify()
           return undefined
         })
-        void exitPromise
+        void exitPromise.then(
+          () => {
+            settled = true
+            notify()
+          },
+          () => {},
+        )
         while (true) {
           const chunk = queue.shift()
           if (chunk !== undefined) {
