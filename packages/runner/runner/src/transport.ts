@@ -211,8 +211,6 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
         // continues until dispose or a successful open.
         this.emitState('reconnecting')
         this.scheduleReconnect()
-        // Surface the failure once per attempt without flooding the log.
-        // eslint-disable-next-line no-console
         void error
       })
     }, delay)

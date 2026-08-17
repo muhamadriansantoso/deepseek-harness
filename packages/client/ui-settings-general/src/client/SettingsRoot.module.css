@@ -69,7 +69,9 @@
    One height for every section, taken from the viewport rather than the
    content: sections differ by hundreds of pixels (a settings list against the
    composition editor), and a content-sized panel would resize under the
-   pointer on every nav click. Whatever does not fit scrolls in `.options`. */
+   pointer on every nav click. Whatever does not fit scrolls in `.options`.
+   Below the two-column floor the nav rail stacks above content and the panel
+   goes full-bleed so the 800px fixed width never overflows a phone. */
 .panel {
   position: relative;
   z-index: 1;
@@ -223,4 +225,65 @@
   overflow: hidden;
   clip: rect(0 0 0 0);
   white-space: nowrap;
+}
+
+/* Narrow viewports: the 188px nav rail + content side-by-side needs ~640px;
+   below that the rail stacks above content (a horizontal scroller of nav
+   cells) and the panel goes full-bleed so the fixed 800px width never
+   overflows a phone. `100dvh` adapts to mobile browser chrome where 100vh is
+   too tall and clips the bottom controls. */
+@media (max-width: 640px) {
+  .overlay {
+    align-items: stretch;
+    justify-content: stretch;
+  }
+
+  .panel {
+    /* Full-bleed: no 24px rounded corner or 48px gutter on a phone. */
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    max-height: 100%;
+    border-radius: 0;
+    /* 100dvh falls back to 100vh on engines without the dynamic unit. */
+    height: 100dvh;
+  }
+
+  /* Nav rail becomes a horizontal scroll strip above the content column. */
+  .nav {
+    flex: none;
+    flex-direction: row;
+    width: auto;
+    max-width: none;
+    gap: 8px;
+    padding: 12px 12px 0;
+    overflow-x: auto;
+  }
+
+  .navTitle {
+    flex: none;
+    padding: 0;
+    margin-right: 4px;
+  }
+
+  .navList {
+    flex-direction: row;
+    gap: 4px;
+  }
+
+  .navCell {
+    flex: none;
+    height: 36px;
+    /* Keep tap targets ≥36px tall on touch. */
+    padding: 6px 12px;
+    white-space: nowrap;
+  }
+
+  .options {
+    padding: 0 16px 16px;
+  }
+
+  .header {
+    padding: 16px 12px 8px;
+  }
 }
