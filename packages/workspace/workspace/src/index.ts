@@ -215,6 +215,37 @@ export class WorkspaceRegistry extends Service {
    * omitted only the canonical-path index is consulted.
    * @returns the owning userId, or undefined when unresolvable / shared.
    */
+  /**
+   * Canonical path the registry indexed for this session, when known.
+   * `undefined` when the header was never indexed or has no cwd. This is the
+   * same mapping {@link ownerForSession} and the entity `sessionIds` filter
+   * read, so callers see a consistent view. The caller decides what to do with
+   * a missing path (a cold session, or a header-less row).
+   * @param id - the session whose path is asked.
+   * @returns the canonical path, or undefined when unindexed / header-less.
+   */
+  cwdForSession(id: SessionId): string | undefined {
+    return this.sessionPaths.get(id)
+  }
+
+  /**
+   * Canonical membership path for one session, preferring the indexed/live
+   * path and falling back to the live header's cwd when the index has not
+   * yet caught that header. This is the path the entity `sessionIds` getter
+   * filtered against at build — the same namespace the caller used to claim
+   * that path in the first place. One helper, one place, so every site reads
+   * the same spelling.
+   * @param sessionId - the session whose path is asked.
+   * @param header - the live header carrying the cwd when the index is stale.
+   * @returns the membership path, or undefined when neither source has one.
+   */
+  canonicalPathForSession(
+    sessionId: SessionId,
+    header?: { readonly cwd?: string },
+  ): string | undefined {
+    return this.sessionPaths.get(sessionId) ?? header?.cwd
+  }
+
   ownerForSession(
     sessionId: SessionId,
     header?: { readonly cwd?: string; readonly deviceId?: string },

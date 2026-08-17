@@ -290,7 +290,10 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
           const namespace = state.namespaces.get(target.settingsNs)
           /* v8 ignore next -- the join marks a row configured only when its namespace resolved */
           if (namespace === undefined) return null
-          if (needsSetup(row, anyUsable) && !dismissedSetup.has(row.entry.provider)) {
+          // Setup card is a first-run onboarding posture. For `user` it is
+          // read-only (no mutating card) — the user sees the provider's name
+          // and the caller in the same way as any other row.
+          if (needsSetup(row, anyUsable) && !dismissedSetup.has(row.entry.provider) && state.canMutate) {
             // First-run posture: the provider exists but has no key — the
             // setup card IS its presence on the page, until the user closes it.
             return (
@@ -312,6 +315,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
           const credentialMissing = !credentialConfigured
             && row.apiKeyEnv !== undefined
             && row.credential?.configured === false
+          const canMutate = state.canMutate
           return (
             <li key={row.entry.provider} className={styles['rowCard']}>
               <div className={styles['rowHead']}>
@@ -343,44 +347,48 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                       )
                       : null}
                 </span>
-                <span className={styles['rowActions']}>
-                  <button
-                    type="button"
-                    className={styles['secondaryButton']}
-                    aria-label={providerCopy(t('editProvider'), target)}
-                    disabled={readOnly}
-                    onClick={() => {
-                      setSavedTarget(undefined)
-                      // One card at a time: leaving `declaring` set would show
-                      // the create card beside this editor, and closing either
-                      // one discards the other's draft.
-                      setDeclaring(false)
-                      setAdding(false)
-                      setEditing(open ? undefined : target)
-                    }}
-                  >
-                    {t('edit')}
-                  </button>
-                  {row.removable
-                    ? (
+                {canMutate
+                  ? (
+                    <span className={styles['rowActions']}>
                       <button
                         type="button"
-                        className={styles['dangerButton']}
-                        aria-label={providerCopy(t('removeProvider'), target)}
+                        className={styles['secondaryButton']}
+                        aria-label={providerCopy(t('editProvider'), target)}
                         disabled={readOnly}
                         onClick={() => {
                           setSavedTarget(undefined)
-                          setDeleteFailure(undefined)
-                          setDeleteTarget(target)
+                          // One card at a time: leaving `declaring` set would show
+                          // the create card beside this editor, and closing either
+                          // one discards the other's draft.
+                          setDeclaring(false)
+                          setAdding(false)
+                          setEditing(open ? undefined : target)
                         }}
                       >
-                        {t('remove')}
+                        {t('edit')}
                       </button>
-                    )
-                    : null}
-                </span>
+                      {row.removable
+                        ? (
+                          <button
+                            type="button"
+                            className={styles['dangerButton']}
+                            aria-label={providerCopy(t('removeProvider'), target)}
+                            disabled={readOnly}
+                            onClick={() => {
+                              setSavedTarget(undefined)
+                              setDeleteFailure(undefined)
+                              setDeleteTarget(target)
+                            }}
+                          >
+                            {t('remove')}
+                          </button>
+                        )
+                        : null}
+                    </span>
+                  )
+                  : null}
               </div>
-              {open
+              {open && canMutate
                 ? renderProviderEditor({
                   target,
                   namespace,
@@ -394,101 +402,105 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
           )
         })}
       </ul>
-      <div className={styles['addBlock']}>
-        {addTarget !== undefined && addNamespace !== undefined
-          ? (
-            <div className={styles['addCard']}>
-              <div className={styles['field']}>
-                <span className={styles['fieldLabel']}>{t('provider')}</span>
-                <select
-                  className={`${styles['input']} ${styles['selectInput']}`}
-                  value={addTarget.provider}
-                  aria-label={t('provider')}
-                  onChange={(event) => {
-                    const row = addable.find(candidate => candidate.entry.provider === event.target.value)
-                    /* v8 ignore next -- the select only lists addable rows */
-                    if (row === undefined) return
-                    setEditing(targetOf(row))
-                  }}
-                >
-                  {addable.map(row => (
-                    <option key={row.entry.provider} value={row.entry.provider}>{row.entry.displayName}</option>
-                  ))}
-                </select>
-              </div>
-              <ProviderEditor
-                key={addTarget.provider}
-                provider={addTarget.provider}
-                displayName={addTarget.displayName}
-                hideTitle
-                namespace={addNamespace}
-                settingsPath={addTarget.settingsPath}
-                api={api}
-                t={t}
-                readOnly={!state.writable || !state.canMutate}
-                onClose={(changed) => { closeEditor(changed, addTarget) }}
-              />
-            </div>
-          )
-          : declaring
-            ? (
-              <div className={styles['addCard']}>
-                <CustomProviderCard
-                  taken={state.rows.map(row => row.entry.provider)}
-                  protocols={protocols}
-                  /* v8 ignore next -- the card only opens from a button disabled without this namespace */
-                  revision={state.namespaces.get('llm-pi-ai')?.revision ?? 0}
-                  api={api}
-                  t={t}
-                  readOnly={!state.writable || !state.canMutate}
-                  onClose={(changed) => {
-                    setDeclaring(false)
-                    if (changed) void controller.load()
-                  }}
-                />
-              </div>
-            )
-            : (
+      {state.canMutate
+        ? (
+          <div className={styles['addBlock']}>
+            {addTarget !== undefined && addNamespace !== undefined
+              ? (
+                <div className={styles['addCard']}>
+                  <div className={styles['field']}>
+                    <span className={styles['fieldLabel']}>{t('provider')}</span>
+                    <select
+                      className={`${styles['input']} ${styles['selectInput']}`}
+                      value={addTarget.provider}
+                      aria-label={t('provider')}
+                      onChange={(event) => {
+                        const row = addable.find(candidate => candidate.entry.provider === event.target.value)
+                        /* v8 ignore next -- the select only lists addable rows */
+                        if (row === undefined) return
+                        setEditing(targetOf(row))
+                      }}
+                    >
+                      {addable.map(row => (
+                        <option key={row.entry.provider} value={row.entry.provider}>{row.entry.displayName}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <ProviderEditor
+                    key={addTarget.provider}
+                    provider={addTarget.provider}
+                    displayName={addTarget.displayName}
+                    hideTitle
+                    namespace={addNamespace}
+                    settingsPath={addTarget.settingsPath}
+                    api={api}
+                    t={t}
+                    readOnly={!state.writable || !state.canMutate}
+                    onClose={(changed) => { closeEditor(changed, addTarget) }}
+                  />
+                </div>
+              )
+              : declaring
+                ? (
+                  <div className={styles['addCard']}>
+                    <CustomProviderCard
+                      taken={state.rows.map(row => row.entry.provider)}
+                      protocols={protocols}
+                      /* v8 ignore next -- the card only opens from a button disabled without this namespace */
+                      revision={state.namespaces.get('llm-pi-ai')?.revision ?? 0}
+                      api={api}
+                      t={t}
+                      readOnly={!state.writable || !state.canMutate}
+                      onClose={(changed) => {
+                        setDeclaring(false)
+                        if (changed) void controller.load()
+                      }}
+                    />
+                  </div>
+                )
+                : (
               // One row for the two ways to gain a provider: adopt one the
               // adapter already knows, or declare one it does not. Side by side
               // and equal-width so they read as siblings and line up with the
               // rows above, rather than two pills of different lengths.
-              <div className={styles['addActions']}>
-                <button
-                  type="button"
-                  className={styles['addButton']}
-                  disabled={addable.length === 0 || !state.writable || !state.canMutate}
-                  onClick={() => {
-                    const first = addable[0]
-                    /* v8 ignore next -- the button is disabled while nothing is addable */
-                    if (first === undefined) return
-                    setSavedTarget(undefined)
-                    setDeclaring(false)
-                    setAdding(true)
-                    setEditing(targetOf(first))
-                  }}
-                >
-                  {/* Same glyph as the composer's attach button. */}
-                  <IconPlusOutline16 size={14} />
-                  {t('add')}
-                </button>
-                <button
-                  type="button"
-                  className={styles['addButton']}
-                  disabled={protocols.length === 0 || !state.writable || !state.canMutate}
-                  onClick={() => {
-                    setSavedTarget(undefined)
-                    setAdding(false)
-                    setEditing(undefined)
-                    setDeclaring(true)
-                  }}
-                >
-                  <IconPlusOutline16 size={14} />
-                  {t('customAdd')}
-                </button>
-              </div>
-            )}
-      </div>
+                  <div className={styles['addActions']}>
+                    <button
+                      type="button"
+                      className={styles['addButton']}
+                      disabled={addable.length === 0 || !state.writable || !state.canMutate}
+                      onClick={() => {
+                        const first = addable[0]
+                        /* v8 ignore next -- the button is disabled while nothing is addable */
+                        if (first === undefined) return
+                        setSavedTarget(undefined)
+                        setDeclaring(false)
+                        setAdding(true)
+                        setEditing(targetOf(first))
+                      }}
+                    >
+                      {/* Same glyph as the composer's attach button. */}
+                      <IconPlusOutline16 size={14} />
+                      {t('add')}
+                    </button>
+                    <button
+                      type="button"
+                      className={styles['addButton']}
+                      disabled={protocols.length === 0 || !state.writable || !state.canMutate}
+                      onClick={() => {
+                        setSavedTarget(undefined)
+                        setAdding(false)
+                        setEditing(undefined)
+                        setDeclaring(true)
+                      }}
+                    >
+                      <IconPlusOutline16 size={14} />
+                      {t('customAdd')}
+                    </button>
+                  </div>
+                )}
+          </div>
+        )
+        : null}
       <Modal
         open={deleteTarget !== undefined}
         onClose={closeDelete}

@@ -23,7 +23,7 @@ import { SubagentError } from '@deepseek-ai/dsh-subagent'
 import type { SubagentListEntry as CatalogSubagentListEntry } from '@deepseek-ai/dsh-subagent'
 import { isUserInvocable } from '@deepseek-ai/dsh-skill'
 import { currentPrincipal, currentRole } from '@deepseek-ai/dsh-principal'
-import type { Workspace, WorkspaceRecord } from '@deepseek-ai/dsh-workspace'
+import type { Workspace, WorkspaceRecord, WorkspaceRegistry } from '@deepseek-ai/dsh-workspace'
 import {
   workspaceDomainState, workspaceRecord, WorkspaceId as brandWorkspaceId,
   WorkspaceMoveInvalidError, WorkspaceOrderInvalidError, WorkspaceUnknownSessionError,
@@ -1079,6 +1079,49 @@ function canSeeServerWorkspace(): boolean {
   return currentRole() !== 'user'
 }
 
+/**
+ * Whether a session belongs to a server-host workspace (one without a
+ * `remote` facet). Such sessions must be hidden from a `user` role entirely —
+ * not only the workspace row, but the session itself, else the client groups
+ * the orphaned session under "Ungrouped" and the server-host content leaks.
+ * A cwd that resolves to a remote workspace, or to no workspace at all (a
+ * cold/shared session), is not a server-workspace session and stays visible per
+ * the ordinary owner rule. The registry lookup is synchronous (no realpath):
+ * callers feed the live header so a freshly created session whose header is
+ * not yet indexed is still caught here.
+ * @param registry - the workspace registry (optional — absent = single-user posture, never server-host).
+ * @param sessionId - the session being tested (only used to read the indexed canonical path).
+ * @param header - the session header carrying cwd/deviceId, when available (device-marked headers are remote by construction).
+ * @returns true when this is a server-host session that the current role must not see.
+ */
+function sessionInServerWorkspace(
+  registry: WorkspaceRegistry | undefined,
+  sessionId: SessionId,
+  header?: { readonly cwd?: string; readonly deviceId?: string },
+): boolean {
+  if (registry === undefined) return false
+  // A device-marked header is a remote (laptop) session by construction, so it
+  // can never be a server-host session; skip the index walk. This catches a
+  // just-created remote session whose path has not yet landed in the index.
+  if (header?.deviceId !== undefined) return false
+  const indexed = registry.cwdForSession(sessionId)
+  const fallback = header?.cwd
+  const path = indexed ?? fallback
+  const canonical = indexed ?? registry.canonicalPathForSession(sessionId, header as { readonly cwd?: string } | undefined) ?? fallback
+  if (canonical === undefined) return false
+  // Prefer the most canonical spelling we have — indexed canonical, else the
+  // registry's canonical-for-session helper, else the raw header cwd — and test
+  // it against every server-host entity path. The path and entity path live in
+  // the same canonical namespace (realpath for locals), so exact match is the
+  // correct membership test.
+  void path
+  for (const entity of registry.list()) {
+    if (entity.remote !== undefined) continue
+    if (entity.path === canonical) return true
+  }
+  return false
+}
+
 /** Wire projection of one workspace entity (the workspace.* value row). */
 function workspaceView(workspace: Workspace): WorkspaceView {
   return {
@@ -1141,16 +1184,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
   const pendingQuestions = new Map<RpcId, PendingQuestion>()
   const pendingApprovals = new Map<RpcId, PendingApproval>()
   /**
-   * Connected mux consumers, each tagged with the authenticated principal the
-   * stream opened under. A session-scoped frame is delivered only to consumers
+   * Connected mux consumers, each tagged with the authenticated principal and role
+   * the stream opened under. A session-scoped frame is delivered only to consumers
    * whose principal equals that session's owner (or is undefined — single-user /
-   * auth-less / legacy-shared — which admits everything). The principal is read
-   * once at stream-open via {@link currentPrincipal} (the WS upgrade establishes
-   * the request-scoped ALS) and is immutable for the stream's lifetime.
+   * auth-less / legacy-shared — which admits everything) AND whose role may see the
+   * workspace (a `user` never sees a server-host workspace). Both are read once
+   * at stream-open via the request-scoped ALS the WS upgrade established and are
+   * immutable for the stream's lifetime.
    */
   interface MuxConsumer {
     queue: FrameQueue<RpcRequest<MuxFrame>>
     principal: string | undefined
+    role: string | undefined
   }
   const muxQueues = new Set<MuxConsumer>()
   const imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
@@ -1374,11 +1419,29 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
    * undefined principal (single-user / auth-less / legacy-shared) admits every
    * frame, preserving the pre-isolation behavior. The guard only rejects when
    * BOTH the consumer principal and the session owner are known and differ.
+   * Additionally, a `user` role never sees sessions belonging to server-host
+   * workspaces, so a session whose legacy/owner-less workspace was hidden does
+   * not leak as a stray row that the client groups under "Ungrouped".
    */
   function muxVisible(consumer: MuxConsumer, sessionId: SessionId, header?: SessionHeader): boolean {
-    if (consumer.principal === undefined) return true
+    if (consumer.principal === undefined) {
+      // Single-user / auth-less: isolation is off, but the server-host gate
+      // still applies via the consumer's role captured at stream-open. No role
+      // (single-user) is admin-equivalent, so admit.
+      if (consumer.role === 'user') {
+        const registry = ctx.get('workspaceRegistry')
+        if (sessionInServerWorkspace(registry, sessionId, header as { readonly cwd?: string; readonly deviceId?: string } | undefined)) {
+          return false
+        }
+      }
+      return true
+    }
     const registry = ctx.get('workspaceRegistry')
     if (registry === undefined) return true
+    if (consumer.role === 'user'
+      && sessionInServerWorkspace(registry, sessionId, header as { readonly cwd?: string; readonly deviceId?: string } | undefined)) {
+      return false
+    }
     const owner = registry.ownerForSession(sessionId, header)
     // Owner unknown (cold session, deleted workspace, legacy owner-less record)
     // OR owner matches the consumer — deliver. A known different owner rejects.
@@ -1883,12 +1946,27 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     // Per-user isolation: a defined principal sees only sessions owned by them
     // (derived from the workspace their cwd belongs to) plus owner-less
     // sessions (cold sessions whose workspace was deleted, or no auth composed).
+    // Additionally, a `user` role never sees sessions whose cwd belongs to a
+    // server-host workspace (remote === undefined) at all — otherwise a
+    // server session whose legacy/owner-less workspace was hidden still arrives
+    // as a stray row, rebuilding "Ungrouped" from content the caller may not see.
     const principal = currentPrincipal()
+    const canSeeServer = canSeeServerWorkspace()
+    const serverGate = (sessionId: SessionId, header: { readonly cwd?: string; readonly deviceId?: string }): boolean => {
+      if (canSeeServer) return true
+      // `undefined` header (a header-less/legacy row) is not a server-workspace
+      // session and must not be dropped — only an explicit server-host member is.
+      if (header === undefined) return true
+      return !sessionInServerWorkspace(ctx.get('workspaceRegistry'), sessionId, header)
+    }
     const ownedAttached = principal === undefined
-      ? ctx.sessions.list().map(summarizeAttached)
+      ? (canSeeServer ? ctx.sessions.list().map(summarizeAttached) : ctx.sessions.list()
+        .filter(session => serverGate(session.id, session.header)).map(summarizeAttached))
       : (await Promise.all(ctx.sessions.list().map(async (session) => {
         const owner = await sessionOwnerFor(ctx, session.header)
-        return owner === undefined || owner === principal ? summarizeAttached(session) : undefined
+        if (owner !== undefined && owner !== principal) return undefined
+        if (!serverGate(session.id, session.header)) return undefined
+        return summarizeAttached(session)
       }))).filter((s): s is SessionSummary => s !== undefined)
     const items = ownedAttached
     signal?.throwIfAborted()
@@ -1897,6 +1975,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     if (persistence !== undefined) {
       const coldRaw = (await persistence.list(signal))
         .filter(meta => !attached.has(meta.id) && meta.cwd !== undefined)
+        .filter(meta => canSeeServer || !sessionInServerWorkspace(
+          ctx.get('workspaceRegistry'), meta.id as SessionId, { cwd: meta.cwd } as { readonly cwd?: string },
+        ))
       // Owner-filter the cold set the same way as the attached set. Cold owner
       // resolution is async (realpath), so filter after the awaited list.
       const cold = principal === undefined
@@ -3701,11 +3782,12 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     events: {
       mux(_request, signal) {
         const queue = new FrameQueue<RpcRequest<MuxFrame>>()
-        // The principal this stream opened under, captured once from the
-        // request-scoped ALS the WS upgrade established. Undefined means no
-        // auth composed / single-user, and isolation is OFF (all frames pass).
+        // The principal + role this stream opened under, captured once from the
+        // request-scoped ALS the WS upgrade established. Undefined means no auth
+        // composed / single-user, and isolation is OFF (all frames pass).
         const principal = currentPrincipal()
-        const consumer: MuxConsumer = { queue, principal }
+        const muxRole = currentRole()
+        const consumer: MuxConsumer = { queue, principal, role: muxRole }
         muxQueues.add(consumer)
         // Baseline subscriptions: only sessions the consumer may see.
         for (const session of ctx.sessions.list()) {
@@ -3828,9 +3910,18 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // Whether a session-scoped host frame reaches this consumer — same
         // owner rule as the mux stream (derived from the workspace the
         // session's cwd belongs to; undefined owner = legacy/shared = visible).
+        // Additionally, a `user` never sees a server-host workspace session, so
+        // a legacy/owner-less server session must not leak as "Ungrouped".
         const sessionVisible = (sessionId: SessionId, header?: SessionHeader): boolean => {
-          if (principal === undefined) return true
           const registry = ctx.get('workspaceRegistry')
+          if (role === 'user'
+            && sessionInServerWorkspace(
+              registry, sessionId,
+              header as { readonly cwd?: string; readonly deviceId?: string } | undefined,
+            )) {
+            return false
+          }
+          if (principal === undefined) return true
           if (registry === undefined) return true
           const owner = registry.ownerForSession(sessionId, header)
           return owner === undefined || owner === principal
@@ -3838,9 +3929,15 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // Whether a workspace-scoped host frame reaches this consumer. A
         // defined principal sees only workspaces they own (plus legacy
         // owner-less records, treated as shared); undefined admits all.
-        const workspaceVisible = (workspace: { owner: string | undefined }): boolean =>
-          principal === undefined || workspace.owner === undefined || workspace.owner === principal
-        const committedWorkspaces = ctx.workspaceRegistry.list().filter(workspaceVisible)
+        // A `user` never sees a server-host workspace (remote === undefined) at
+        // all, so a legacy server row is not shared to them either.
+        const workspaceVisible = (workspace: { owner: string | undefined; remote?: unknown }): boolean => {
+          if (role === 'user' && workspace.remote === undefined) return false
+          return principal === undefined || workspace.owner === undefined || workspace.owner === principal
+        }
+        const committedWorkspaces = ctx.workspaceRegistry.list().filter(
+          workspace => workspaceVisible(workspace as { owner: string | undefined; remote?: unknown }),
+        )
         const committedWorkspaceIds = new Set(
           committedWorkspaces.map(workspace => String(workspace.id)),
         )
