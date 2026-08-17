@@ -47,10 +47,14 @@ function candidateExists(candidate: string): boolean {
   try {
     const stat = lstatSync(candidate)
     return stat.isFile() || stat.isSymbolicLink()
-  } catch {
-    // ENOENT (the candidate vanished between listing and probing) is the only
-    // expected failure; any other error names an unspawnable path, so false
-    // is the safe answer for it too.
+  } catch (error: unknown) {
+    // The candidate is unspawnable. On Windows the Store app execution alias
+    // (a reparse point) reports EACCES via stat but is visible via lstat as a
+    // symlink — older Node versions surface that as EACCES here too. Treat it as
+    // spawnable so CreateProcess can resolve it; ENOENT and every other failure
+    // remain "not present".
+    const code = (error as NodeJS.ErrnoException).code
+    if (code === 'EACCES' || code === 'EPERM') return true
     return false
   }
 }

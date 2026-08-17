@@ -430,10 +430,11 @@ export class WorkspaceRegistry extends Service {
       if (callerUserId !== undefined && remote.userId !== callerUserId) continue
       const root = entity.path
       if (path === root) return remote
-      // Descendant match: a subpath of the workspace root. POSIX-join the
-      // root so a literal prefix (`/a` matching `/ab`) never fires.
-      const sep = root.endsWith('/') ? root : `${root}/`
-      if (path.startsWith(sep)) return remote
+      // Descendant match: a subpath of the workspace root. Both POSIX `/` and
+      // Windows `\` are valid separators — a Windows workspace
+      // `D:\sgs-sap-project` with a child `D:\sgs-sap-project\sub` must match
+      // even though the child uses backslash.
+      if (path.startsWith(`${root}/`) || path.startsWith(root + '\\')) return remote
     }
     return undefined
   }
