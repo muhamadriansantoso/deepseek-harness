@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-runner-hub",
   "description": "Server-side hub for the remote-workspace runner: per-user WebSocket connections, an LLM gateway that holds the central API key, the model catalog source of truth, skill/MCP inventory sync, and the super-admin role gate",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.9",
   "publishConfig": {
     "access": "public"
   },

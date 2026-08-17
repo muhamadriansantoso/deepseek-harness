@@ -6801,6 +6801,12 @@ importers:
       '@deepseek-ai/dsh-invariants':
         specifier: workspace:^
         version: link:../../runtime-diagnostics/invariants
+      '@deepseek-ai/dsh-principal':
+        specifier: workspace:^
+        version: link:../../util/principal
+      '@deepseek-ai/dsh-runner-hub':
+        specifier: workspace:^
+        version: link:../../runner/runner-hub
       '@deepseek-ai/dsh-settings':
         specifier: workspace:^
         version: link:../../settings/settings
@@ -6813,9 +6819,15 @@ importers:
       '@deepseek-ai/dsh-subprocess-local':
         specifier: workspace:^
         version: link:../../subprocess/subprocess-local
+      '@deepseek-ai/dsh-subprocess-remote':
+        specifier: workspace:^
+        version: link:../../runner/subprocess-remote
       '@deepseek-ai/dsh-timeout':
         specifier: workspace:^
         version: link:../../util/timeout
+      '@deepseek-ai/dsh-workspace':
+        specifier: workspace:^
+        version: link:../../workspace/workspace
 
   packages/shell/pwsh-sandbox:
     devDependencies:

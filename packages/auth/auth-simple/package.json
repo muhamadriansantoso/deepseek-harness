@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-auth-simple",
   "description": "Simple user-id + password authentication for the DeepSeek Harness web surface: PostgreSQL-backed user store, bcrypt password hashing, HMAC-signed session tokens, and an authHook that gates the /api fence",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.9",
   "publishConfig": {
     "access": "public"
   },

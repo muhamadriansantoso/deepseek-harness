@@ -448,6 +448,8 @@ export interface ConversationSessionHeaderInjected {
   }
   /** Select a real Session through the runtime navigation owner. */
   open: (sessionId: SessionId) => void
+  /** Open the sidebar drawer on narrow viewports (no-op when already open). */
+  openSidebar?: () => void
 }
 
 /**

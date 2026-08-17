@@ -101,6 +101,14 @@ export async function serveRemoteCall(
 /** Live spawned processes keyed by their spawn rpcId, for terminate. */
 const spawned = new Map<string, LiveHandle>()
 
+/**
+ * Adaptive poll bounds for the subprocess output drain loop. The minimum keeps
+ * streaming latency low while output is flowing; the maximum caps idle wakeups
+ * so a long-running command does not burn CPU. See `handleSpawn`.
+ */
+const REMOTE_POLL_MIN_MS = 5
+const REMOTE_POLL_MAX_MS = 120
+
 /** Serve `subprocess.spawn`: spawn locally, stream output, settle with `runner-exit`. */
 async function handleSpawn(
   ctx: Context,
@@ -158,11 +166,16 @@ async function handleSpawn(
   try {
     let settled = false
     // Poll the collected readers until the process settles, then do one final
-    // drain so the tail that arrived alongside exit is not lost.
+    // drain so the tail that arrived alongside exit is not lost. The interval
+    // is adaptive: poll aggressively right after activity (output is flowing,
+    // keep streaming latency low), back off while idle (a long-running command
+    // should not burn CPU, and a quick command should report within a few ms).
     void (async (): Promise<void> => {
+      let interval = REMOTE_POLL_MIN_MS
       while (!settled) {
-        await drain()
-        await new Promise(resolve => setTimeout(resolve, 25))
+        const activity = await drain()
+        interval = activity ? REMOTE_POLL_MIN_MS : Math.min(interval * 2, REMOTE_POLL_MAX_MS)
+        await new Promise(resolve => setTimeout(resolve, interval))
       }
       await drain()
     })().catch(() => {})

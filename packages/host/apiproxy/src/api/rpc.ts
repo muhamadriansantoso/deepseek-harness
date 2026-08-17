@@ -41,6 +41,7 @@ export interface RpcErrorDetailsMap {
   'device-offline': { sessionId: SessionId }
   'workspace-not-found': { workspaceId: string }
   'workspace-invalid-path': { path: string }
+  'workspace-forbidden': { path: string }
   'workspace-name-conflict': { name: string }
   'workspace-move-invalid': { workspaceId: string; sessionId: SessionId; beforeSessionId?: SessionId }
   'directory-unreadable': { path: string }

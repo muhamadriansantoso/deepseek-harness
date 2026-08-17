@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-runner",
   "description": "The dsh laptop runner bundle: a thin layer over dsh-base that swaps the local LLM adapter for the remote gateway, logs in to a server, and opens the runner channel so the agent loop runs on the laptop while every model call is proxied to the server",
-  "version": "0.1.0-rc.5",
+  "version": "0.1.0-rc.9",
   "publishConfig": {
     "access": "public"
   },

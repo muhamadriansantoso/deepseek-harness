@@ -13,7 +13,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { PropsRenderSlots, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
-import { computeColumns, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT } from './columns.ts'
+import { clampWidth, computeColumns, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN } from './columns.ts'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
@@ -136,10 +136,19 @@ export function AppFrame({
   const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
   useEffect(() => { actions.setNarrow(narrow) }, [actions, narrow])
   const sidebarCollapsed = narrow ? !panels.narrowExpanded : panels.sidebar === 0
-  const sidebarPreference = sidebarCollapsed
-    ? 0
-    : panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar
-  const cols = computeColumns(viewport, sidebarPreference, detailsSession === undefined ? 0 : panels.details)
+  // On narrow viewports the *expanded* sidebar is a fixed-position overlay,
+  // not a grid column — so the grid must stay in the rail layout even while
+  // the drawer is open, otherwise center shrinks to ~95px (the screenshot
+  // defect at 375px: 280px sidebar column + 95px center). Grid sidebar is
+  // therefore always the rail on narrow viewports; the drawer width comes
+  // from the store preference separately.
+  const mobileDrawerOpen = narrow && panels.narrowExpanded
+  const gridSidebarPreference = narrow ? 0 : sidebarCollapsed ? 0 : panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar
+  // Drawer width only matters for the overlay — clamp like the drag path does.
+  const drawerWidth = narrow && !sidebarCollapsed
+    ? clampWidth(panels.sidebar === 0 ? SIDEBAR_DEFAULT : panels.sidebar, SIDEBAR_MIN, SIDEBAR_MAX)
+    : SIDEBAR_DEFAULT
+  const cols = computeColumns(viewport, gridSidebarPreference, detailsSession === undefined ? 0 : panels.details)
   const colsRef = useRef(cols)
   colsRef.current = cols
 
@@ -175,12 +184,31 @@ export function AppFrame({
             sidebar keeps the mounted slot at the compact-rail width, and the
             component sees its rendered state as owner params decided here
             (collapsed follows the resolved rail, so a derived auto-collapse
-            renders the rail UI too). */}
+            renders the rail UI too). On narrow viewports the drawer overlay
+            renders the same slot a second time above the grid (see below) — the
+            grid copy stays as the 56px rail. */}
         {renderSlot('sidebar', {
           collapsed: sidebarCollapsed,
           width: cols.sidebar,
         })}
       </div>
+      {/* Mobile drawer: on narrow viewports the expanded sidebar renders as a
+          fixed overlay above the grid, so center keeps its 319px instead of
+          shrinking to 95px. The grid copy stays as the rail underneath; the
+          scrim dismisses the drawer. */}
+      {mobileDrawerOpen && (
+        <div className={css.mobileDrawerRoot} data-mobile-drawer="">
+          <button
+            type="button"
+            className={css.mobileDrawerScrim}
+            aria-label="Close sidebar"
+            onClick={() => { actions.toggleSidebar() }}
+          />
+          <div className={css.mobileDrawerPanel} style={{ width: drawerWidth }}>
+            {renderSlot('sidebar', { collapsed: false, width: drawerWidth })}
+          </div>
+        </div>
+      )}
       <>
         {/* Both column occupants stay at fixed tree positions from first
             paint — no loading gate: a bare status line reads worse than
@@ -193,8 +221,10 @@ export function AppFrame({
       <div className={css.overlayLayer} data-shell-overlay>
         {renderSlot('shell.overlay', {})}
       </div>
-      {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {/* The collapsed rail is fixed-width: no resize handle while closed. On
+          narrow viewports the sidebar is an overlay drawer, so no handle there
+          either (the drawer panel itself is the affordance). */}
+      {!sidebarCollapsed && !narrow && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
       {cols.details > 0 && <DragHandle side="details" left={viewport - cols.details} onStart={onDetailsStart} onDrag={onDetailsDrag} onEnd={onDragEnd} />}
     </div>
   )

@@ -8,6 +8,7 @@ import type {
 } from '../contract/slots.ts'
 import type { ViewTab } from '../contract/views.ts'
 import css from './ConversationRoot.module.css'
+import headerCss from './ConversationSessionHeader.module.css'
 
 /** Full props composed from the strict session body contract. */
 export type ConversationSessionProps = ConversationSessionSlotProps
@@ -60,7 +61,7 @@ function equalBreadcrumbs(left: readonly Breadcrumb[], right: readonly Breadcrum
  */
 export function ConversationSessionHeader({
   sessionId, useSession, useSessions, useStore, actions,
-  renderSlot, views, open, t,
+  renderSlot, views, open, openSidebar, t,
 }: ConversationSessionHeaderProps) {
   useSyncExternalStore(views.subscribe, views.version)
   const tabs = views.list()
@@ -79,6 +80,16 @@ export function ConversationSessionHeader({
       {!hideChrome && (
         <>
           <div className={css.titleRow}>
+            <button
+              type="button"
+              className={headerCss.menuButton}
+              aria-label={t('header.menu')}
+              onClick={() => { openSidebar?.() }}
+            >
+              <span className={headerCss.menuIcon} aria-hidden="true">
+                <span /><span /><span />
+              </span>
+            </button>
             <div className={css.titleCluster}>
               <nav className={css.crumbs} aria-label={t('session.hierarchy')}>
                 {ancestry.map((summary, index) => {

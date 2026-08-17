@@ -26,18 +26,22 @@ const repoRoot = fileURLToPath(new URL('../', import.meta.url))
 const staging = resolve(repoRoot, '.scratch/runner-publish')
 const tarballs = join(staging, 'tarballs')
 
-// The 6 packages to publish under @mrians21, in publish dependency order.
+// The 7 packages to publish under @mrians21, in publish dependency order.
 // auth-simple and client-connection are runner-hub peer/imports not published
 // under @deepseek-ai with the exports the hub needs (isTrustedApiRequest etc.),
 // so they ship as @mrians21 forks too. client-connection precedes runner-hub
 // (runner-hub imports it; npm v7+ auto-resolves peers against the registry).
+// dsh-principal is the 7th: a peer-free AsyncLocalStorage utility that
+// client-connection re-exports, and whose @deepseek-ai name was never published
+// at rc.* (so the client install must fetch it via @mrians21).
 const PACKAGES = [
-  { dir: 'packages/boot/app-boot', name: '@mrians21/dsh-app-boot', version: '0.1.0-rc.6' },
-  { dir: 'packages/runner/llm-remote', name: '@mrians21/dsh-llm-remote', version: '0.1.0-rc.6' },
-  { dir: 'packages/auth/auth-simple', name: '@mrians21/dsh-auth-simple', version: '0.1.0-rc.6' },
-  { dir: 'packages/client/connection', name: '@mrians21/dsh-client-connection', version: '0.1.0-rc.6' },
-  { dir: 'packages/runner/runner-hub', name: '@mrians21/dsh-runner-hub', version: '0.1.0-rc.6' },
-  { dir: 'packages/runner/runner', name: '@mrians21/dsh-runner', version: '0.1.0-rc.6' },
+  { dir: 'packages/util/principal', name: '@mrians21/dsh-principal', version: '0.1.0-rc.9' },
+  { dir: 'packages/boot/app-boot', name: '@mrians21/dsh-app-boot', version: '0.1.0-rc.9' },
+  { dir: 'packages/runner/llm-remote', name: '@mrians21/dsh-llm-remote', version: '0.1.0-rc.9' },
+  { dir: 'packages/auth/auth-simple', name: '@mrians21/dsh-auth-simple', version: '0.1.0-rc.9' },
+  { dir: 'packages/client/connection', name: '@mrians21/dsh-client-connection', version: '0.1.0-rc.9' },
+  { dir: 'packages/runner/runner-hub', name: '@mrians21/dsh-runner-hub', version: '0.1.0-rc.9' },
+  { dir: 'packages/runner/runner', name: '@mrians21/dsh-runner', version: '0.1.0-rc.9' },
 ]
 
 // Published ranges for the @deepseek-ai deps the staged packages reference.
@@ -73,6 +77,8 @@ const PUBLISHED = {
   '@deepseek-ai/dsh-attachment': '^0.1.0-rc.6',
   '@deepseek-ai/dsh-host-apiproxy': '^0.1.0-rc.6',
   '@deepseek-ai/dsh-commands': '^0.1.0-rc.6',
+  '@deepseek-ai/dsh-principal': '^0.1.0-rc.6', // kept for transitive completeness; the published client manifest rewrites this dep to @mrians21/dsh-principal
+  '@mrians21/dsh-principal': '^0.1.0-rc.9',
   // Non-dsh infrastructure packages (stable releases, off the rc line).
   '@deepseek-ai/schemastery': '^3.18.1',
   '@deepseek-ai/cordis': '^4.0.1',
@@ -84,12 +90,12 @@ const PUBLISHED = {
   // The 6 renamed packages refer to each other under the @mrians21 scope.
   // client-connection is forked because the published @deepseek-ai version
   // lacks the isTrustedApiRequest/rejectWebSocketUpgrade re-exports the hub needs.
-  '@mrians21/dsh-app-boot': '^0.1.0-rc.6',
-  '@mrians21/dsh-llm-remote': '^0.1.0-rc.6',
-  '@mrians21/dsh-auth-simple': '^0.1.0-rc.6',
-  '@mrians21/dsh-client-connection': '^0.1.0-rc.6',
-  '@mrians21/dsh-runner-hub': '^0.1.0-rc.6',
-  '@mrians21/dsh-runner': '^0.1.0-rc.6',
+  '@mrians21/dsh-app-boot': '^0.1.0-rc.9',
+  '@mrians21/dsh-llm-remote': '^0.1.0-rc.9',
+  '@mrians21/dsh-auth-simple': '^0.1.0-rc.9',
+  '@mrians21/dsh-client-connection': '^0.1.0-rc.9',
+  '@mrians21/dsh-runner-hub': '^0.1.0-rc.9',
+  '@mrians21/dsh-runner': '^0.1.0-rc.9',
 }
 
 // The packages renamed @deepseek-ai -> @mrians21 in manifests + JS.
@@ -104,6 +110,7 @@ const MANIFEST_RENAMES = {
   '@deepseek-ai/dsh-runner/startup': '@mrians21/dsh-runner/startup',
   '@deepseek-ai/dsh-auth-simple': '@mrians21/dsh-auth-simple',
   '@deepseek-ai/dsh-client-connection': '@mrians21/dsh-client-connection',
+  '@deepseek-ai/dsh-principal': '@mrians21/dsh-principal',
 }
 
 // Only rewrite import specifiers for the renamed packages inside built JS.
@@ -115,6 +122,7 @@ const RENAMED = [
   ['@deepseek-ai/dsh-runner', '@mrians21/dsh-runner'],
   ['@deepseek-ai/dsh-auth-simple', '@mrians21/dsh-auth-simple'],
   ['@deepseek-ai/dsh-client-connection', '@mrians21/dsh-client-connection'],
+  ['@deepseek-ai/dsh-principal', '@mrians21/dsh-principal'],
 ]
 
 function rewriteSpecifiers(str) {
@@ -159,7 +167,12 @@ function rewriteManifest(pkg) {
     for (const [dep, spec] of Object.entries(deps)) {
       // Rename the 3 runner deps @deepseek-ai -> @mrians21 first.
       const renamedDep = MANIFEST_RENAMES[dep] ?? dep
-      if (spec === 'workspace:^') { next[renamedDep] = PUBLISHED[renamedDep] ?? spec; continue }
+      if (spec === 'workspace:^') {
+        const published = PUBLISHED[renamedDep]
+        if (!published) throw new Error(`${pkg.name}: no PUBLISHED entry for workspace:^ dep ${renamedDep} (section ${section}) — add it to PUBLISHED before publishing`)
+        next[renamedDep] = published
+        continue
+      }
       next[renamedDep] = spec
     }
     manifest[section] = next

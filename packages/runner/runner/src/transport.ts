@@ -104,6 +104,8 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
   private connectOptions: RunnerTransportOptions | undefined
   /** A reconnect timer inflight; cleared on dispose so a teardown never races a retry. */
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined
+  /** WS keepalive handle (`setInterval` ping) — armed per-generation, cleared on close/dispose. */
+  private keepaliveTimer: ReturnType<typeof setInterval> | undefined
 
   /** Coarse state transitions for the driver. Fires only on change. */
   onStateChange?: (state: RunnerConnectionState) => void
@@ -162,6 +164,7 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
         const firstOpen = this.attempt === 0
         this.attempt = 0
         this.emitState('connected')
+        this.armKeepalive(ws)
         if (!firstOpen) this.onReconnect?.()
         resolve()
       })
@@ -184,7 +187,8 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
 
   /** A lost socket: reject in-flight calls, then schedule a reconnect (unless disposed). */
   private handleClose(): void {
-    const cause = new Error('runner channel closed')
+    const cause = new Error('runner channel closed — reconnecting')
+    this.clearKeepalive()
     this.rejectPending(cause)
     this.ws = undefined
     if (this.disposed || !this.running) {
@@ -379,7 +383,6 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
           yield queue.shift() as StreamChunk
           continue
         }
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- cross-tick: rejectPending().wake sets `finished`
         if (finished) {
           // oxlint-disable-next-line typescript/no-unnecessary-condition -- cross-tick: reject(error) sets `failure`
           if (failure !== undefined) throw failure
@@ -488,6 +491,7 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
     if (this.disposed) return
     this.disposed = true
     this.running = false
+    this.clearKeepalive()
     if (this.reconnectTimer !== undefined) {
       clearTimeout(this.reconnectTimer)
       this.reconnectTimer = undefined
@@ -498,6 +502,29 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
       this.ws?.close()
     } catch {
       // Socket loss won the race.
+    }
+  }
+
+  /** Arm a periodic WS ping for this generation (NAT/proxy idle keepalive). */
+  private armKeepalive(ws: WebSocket): void {
+    this.clearKeepalive()
+    // ws.ping() is a WebSocket-level ping (not an app frame) — proxies and
+    // NATs see liveness even while the app is idle. 25 s keeps most idle
+    // path timeouts (< 60 s) from silently dropping the channel. Failures
+    // are not fatal: the pending socket's `close` event will drive the
+    // reconnect loop and the next generation will arm a fresh interval.
+    ws.on('pong', () => {})
+    ws.on('error', () => {})
+    this.keepaliveTimer = setInterval(() => {
+      if (ws.readyState !== WebSocket.OPEN) return
+      try { ws.ping() } catch {}
+    }, 25_000)
+  }
+
+  private clearKeepalive(): void {
+    if (this.keepaliveTimer !== undefined) {
+      clearInterval(this.keepaliveTimer)
+      this.keepaliveTimer = undefined
     }
   }
 

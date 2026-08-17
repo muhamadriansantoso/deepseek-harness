@@ -58,11 +58,15 @@ export class RunnerConnection {
   }
 
   /**
-   * Send a frame to the laptop; rejects if the socket is closed.
+   * Send a frame to the laptop; rejects if the socket is closed (the laptop's
+   * reconnect loop will bring it back — a retryable transient, not a session
+   * configuration failure).
    * @param frame - the frame to serialize and send.
    */
   send(frame: RunnerFrame): Promise<void> {
-    if (!this.isOpen) return Promise.reject(new Error('runner socket is closed'))
+    if (!this.isOpen) {
+      return Promise.reject(new Error('runner socket is closed — the laptop is reconnecting; retry, or reconnect `dsh-runner connect` if it persists'))
+    }
     return new Promise((resolve, reject) => {
       this.ws.send(serializeFrame(frame), (error) => {
         if (error) reject(error)

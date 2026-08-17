@@ -117,3 +117,43 @@
 .overlayLayer > * {
   pointer-events: auto;
 }
+
+/* Mobile drawer: narrow viewports open the sidebar as a fixed overlay above
+   the grid, so the center column keeps its 319px instead of shrinking to 95px.
+   The grid's sidebarCol stays as the 56px rail underneath; the drawer's panel
+   renders the same sidebar slot at its preferred drag width. */
+.mobileDrawerRoot {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+}
+
+.mobileDrawerScrim {
+  position: absolute;
+  inset: 0;
+  border: none;
+  padding: 0;
+  background: rgba(0, 0, 0, 0.32);
+  cursor: pointer;
+}
+
+.mobileDrawerPanel {
+  position: relative;
+  flex: none;
+  height: 100%;
+  overflow: hidden;
+  background: var(--dsw-specific-sidebar-fill);
+  border-right: 1px solid var(--dsw-alias-border-l1);
+  box-shadow: 8px 0 24px rgba(0, 0, 0, 0.12);
+  animation: mobile-drawer-in 220ms var(--ds-ease-in-out);
+}
+
+@keyframes mobile-drawer-in {
+  from { transform: translateX(-12px); opacity: 0.92; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobileDrawerPanel { animation: none; }
+}

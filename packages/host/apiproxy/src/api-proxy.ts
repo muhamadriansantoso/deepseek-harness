@@ -3136,6 +3136,21 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       },
 
       async create(request) {
+        // A `user` role creates server-host workspaces (no `remote` facet) which
+        // are immediately hidden by both the server and client role gates
+        // (canSeeServerWorkspace / service filter) — a silent vanish for the
+        // caller. The user's only client-side attach path is Settings →
+        // Runner devices (which uses /api/runner/workspaces and createRemote).
+        // Rejecting keeps the create atomic and the error surfaces via
+        // WorkspaceCreateError → the folder-error dialog, so the next step is
+        // actionable instead of a disappearing row.
+        if (!canSeeServerWorkspace()) {
+          return err(request, {
+            code: 'workspace-forbidden',
+            message: 'role "user" may not attach a server-host workspace; use Settings → Runner devices to attach a laptop folder instead',
+            details: { path: request.payload.path },
+          })
+        }
         const { path } = request.payload
         try {
           const { workspace, created } = await ensureWorkspace(path, currentPrincipal())
