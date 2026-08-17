@@ -72,13 +72,14 @@ async function serveStream(
   }
   try {
     for await (const chunk of stream) {
+      if (!conn.isOpen) break
       await conn.send({ type: 'runner-stream', rpcId: call.rpcId, kind: 'llm-token', data: JSON.stringify(chunk) })
     }
-    // A clean stream ends with a `finish` chunk (forwarded above); signal the
-    // laptop's generator to complete without a separate exit frame.
-    await conn.send({ type: 'runner-response', rpcId: call.rpcId, result: { ok: true } })
+    // A clean stream ends with a finish chunk; laptop disconnect races settle there too (see
+    // Agent Note: LLM streaming + runner disconnect — an abandon loop shows as a clean idle).
+    if (conn.isOpen) await conn.send({ type: 'runner-response', rpcId: call.rpcId, result: { ok: true } })
   } catch (error: unknown) {
-    await conn.send({ type: 'runner-error', rpcId: call.rpcId, code: 'llm-stream', message: String(error) })
+    if (conn.isOpen) await conn.send({ type: 'runner-error', rpcId: call.rpcId, code: 'llm-stream', message: String(error) })
   }
 }
 

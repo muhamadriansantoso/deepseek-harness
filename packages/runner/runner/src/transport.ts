@@ -356,8 +356,17 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
     try {
       await this.send({ type: 'runner-call', rpcId, method, payload: serializable })
     } catch (error: unknown) {
-      this.pendingStream.delete(rpcId)
-      throw error instanceof Error ? error : new Error(String(error))
+      const err = error instanceof Error ? error : new Error(String(error))
+      // The static narrowing that proves these re-checks "always false" cannot see
+      // handleClose()'s cross-tick mutations of `finished` / pendingStream.
+      // oxlint-disable-next-line typescript/no-unnecessary-condition
+      if (finished) throw err
+      const entry = this.pendingStream.get(rpcId)
+      if (entry !== undefined) {
+        this.pendingStream.delete(rpcId)
+        throw err
+      }
+      throw err
     }
     try {
       while (true) {
@@ -366,6 +375,9 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
           continue
         }
         if (finished) {
+          // The static narrowing that proves this re-check "always false" cannot see
+          // the cross-tick `failure = error` set in the `reject` closure.
+          // oxlint-disable-next-line typescript/no-unnecessary-condition
           if (failure !== undefined) throw failure
           return
         }
