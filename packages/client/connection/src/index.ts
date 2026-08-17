@@ -81,25 +81,37 @@ export const Config: z<ConnectionConfig> = z.object({
 })
 
 /**
- * Methods gated to loopback even on a trusted-host deployment. Native dialogs
- * act on the host machine; the settings and credential domains mutate the
- * user's configuration and secret store, and READING them is equally
- * privileged — `settings.describe` returns every exposed namespace's
- * configuration and `credentials.describe` reports whether an arbitrary
- * environment-variable name is configured and where from, which is
- * reconnaissance no anonymous caller should have. `trustedHosts` is a
- * DNS-rebinding fence, explicitly not authentication, so the whole
- * configuration plane stays loopback-same-origin OR admin-authenticated —
- * an authenticated `admin` role unpins privileged methods on any origin.
- * `llm.discoverModels` belongs to that plane on both counts: it
- * carries a draft credential, and it makes the HOST issue a GET to a URL the
- * caller chose and reports back the status or the parsed body — an anonymous
- * LAN caller would have a probe for whatever the host can reach and the
- * browser cannot.
+ * Methods whose callers must be privileged.
  *
- * The model catalog (`llm.providers`, `llm.models`) is deliberately NOT here:
- * it carries provider ids, display names, and model lists — no endpoints,
- * keys, or key state — and a LAN client's model picker legitimately needs it.
+ * Two postures share this set:
+ *  - Single-user (`auth` absent): loopback-only. `isTrustedApiRequest(request, [])`
+ *    admits only loopback (no declared authority), so a remote caller is refused
+ *    even without a role to read.
+ *  - Multi-user (`auth` present): admin-only on any origin. The browser reaches
+ *    the `/api` surface through loopback (or a reverse proxy whose Host is the
+ *    loopback address), so a loopback check would let every authenticated `user`
+ *    mutate the configuration plane; the role is the gate and an `admin` is
+ *    unpinned on any origin.
+ *
+ * Mutations (`settings.mutate/update/replace`, `credentials.set/unset`,
+ * `llm.discoverModels`, plus the preset/host dialogs) are always here. The
+ * read surfaces `settings.describe`, `credentials.describe`, and the model
+ * catalog (`llm.providers`, `llm.models`) are deliberately NOT here: the
+ * Models page's read-only posture for a `user` needs them to render. `describe`
+ * is redacted (secrets never ride the wire; credentials report configured/
+ * source/writable only), matching the `llm.*` catalog which carries only ids and
+ * display names — no endpoints, keys, or key state — so a `user` can still fill
+ * a model picker without reconnaissance. `llm.discoverModels` belongs to the
+ * privileged plane on both counts: it carries a draft credential, and it makes
+ * the host issue a GET to a URL the caller chose and reports back the status or
+ * the parsed body — an unauthenticated or non-admin LAN caller would have a probe
+ * for whatever the host can reach and the browser cannot.
+ *
+ * `agentPreset.list` and choosing one at `session.create` are also not here: the
+ * capability is not the preset's to grant (the deployment's own default already
+ * carries shell/filesystem tools), so any caller that may start a session can
+ * already run commands as this process; pinning the switch would be a fence
+ * beside an open gate.
  */
 const PRIVILEGED_METHODS = new Set([
   // A preset composition names the plugins a session runs, so reading one is
@@ -164,14 +176,25 @@ export function apply(ctx: Context, config?: ConnectionConfig): void {
         return new Response('unauthorized', { status: 401 })
       }
 
-      // Privileged plane: loopback OR an authenticated admin. Reads `auth.role`
-      // directly (not the ALS) so ordering is irrelevant; non-admin non-loopback
-      // still 403s.
-      if (method !== undefined
-        && PRIVILEGED_METHODS.has(method)
-        && auth?.role !== 'admin'
-        && !isTrustedApiRequest(request, [])) {
-        return new Response('forbidden', { status: 403 })
+      // Privileged plane. Two postures:
+      //  - No auth composed (`auth === undefined`, single-user / legacy): the
+      //    privileged methods stay loopback-only, exactly as before auth existed.
+      //    `isTrustedApiRequest(request, [])` admits only loopback (no declared
+      //    authority), so a remote caller is refused even without a role to read.
+      //  - Auth composed (`auth` is an identity object): the privileged methods
+      //    are admin-only regardless of origin. A multi-user deployment serves
+      //    the browser through loopback (or a reverse proxy whose Host is the
+      //    loopback address), so a loopback check would let every authenticated
+      //    `user` mutate the configuration plane; the role is the gate instead.
+      //    An authenticated `admin` is unpinned on any origin (remote + auth).
+      if (method !== undefined && PRIVILEGED_METHODS.has(method)) {
+        if (auth === undefined) {
+          if (!isTrustedApiRequest(request, [])) {
+            return new Response('forbidden', { status: 403 })
+          }
+        } else if (auth.role !== 'admin') {
+          return new Response('forbidden', { status: 403 })
+        }
       }
 
       if (request.method === 'GET' && (pathname === MUX_EVENTS_PATH || pathname === HOST_EVENTS_PATH)) {
