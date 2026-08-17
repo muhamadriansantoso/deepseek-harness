@@ -38,6 +38,8 @@ export interface WorkspaceView {
    * legacy/shared record or an auth-less deployment. The per-user scoping key.
    */
   owner?: string
+  /** The runner device backing a remote workspace; absent = server-host directory. */
+  remote?: { userId: string; deviceId: string }
 }
 
 /** Workspace-domain unary methods (the map keys workspace.* of RpcMethodMap). */

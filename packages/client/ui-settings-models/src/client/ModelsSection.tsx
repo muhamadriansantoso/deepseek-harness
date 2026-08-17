@@ -276,6 +276,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
       <h2 className={styles['title']}>{t('title')}</h2>
       <p className={styles['intro']}>{t('intro')}</p>
       {!state.writable && state.status === 'ready' ? <p className={styles['notice']}>{t('readOnly')}</p> : null}
+      {!state.canMutate && state.status === 'ready' ? <p className={styles['notice']}>{t('adminOnly')}</p> : null}
       {savedIdentity === undefined
         ? null
         : (
@@ -299,13 +300,14 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                   namespace,
                   api,
                   t,
-                  readOnly: !state.writable,
+                  readOnly: !state.writable || !state.canMutate,
                   onClose: (changed) => { closeSetup(changed, target) },
                 })}
               </li>
             )
           }
           const open = !adding && editing?.provider === row.entry.provider
+          const readOnly = !state.writable || !state.canMutate
           const credentialConfigured = row.credential?.configured === true
           const credentialMissing = !credentialConfigured
             && row.apiKeyEnv !== undefined
@@ -346,6 +348,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                     type="button"
                     className={styles['secondaryButton']}
                     aria-label={providerCopy(t('editProvider'), target)}
+                    disabled={readOnly}
                     onClick={() => {
                       setSavedTarget(undefined)
                       // One card at a time: leaving `declaring` set would show
@@ -364,7 +367,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                         type="button"
                         className={styles['dangerButton']}
                         aria-label={providerCopy(t('removeProvider'), target)}
-                        disabled={!state.writable}
+                        disabled={readOnly}
                         onClick={() => {
                           setSavedTarget(undefined)
                           setDeleteFailure(undefined)
@@ -383,7 +386,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                   namespace,
                   api,
                   t,
-                  readOnly: !state.writable,
+                  readOnly,
                   onClose: (changed) => { closeEditor(changed, target) },
                 })
                 : null}
@@ -422,7 +425,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                 settingsPath={addTarget.settingsPath}
                 api={api}
                 t={t}
-                readOnly={!state.writable}
+                readOnly={!state.writable || !state.canMutate}
                 onClose={(changed) => { closeEditor(changed, addTarget) }}
               />
             </div>
@@ -437,7 +440,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                   revision={state.namespaces.get('llm-pi-ai')?.revision ?? 0}
                   api={api}
                   t={t}
-                  readOnly={!state.writable}
+                  readOnly={!state.writable || !state.canMutate}
                   onClose={(changed) => {
                     setDeclaring(false)
                     if (changed) void controller.load()
@@ -454,7 +457,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                 <button
                   type="button"
                   className={styles['addButton']}
-                  disabled={addable.length === 0 || !state.writable}
+                  disabled={addable.length === 0 || !state.writable || !state.canMutate}
                   onClick={() => {
                     const first = addable[0]
                     /* v8 ignore next -- the button is disabled while nothing is addable */
@@ -472,7 +475,7 @@ function Loaded({ injected }: { injected: ModelsSectionInjected }): ReactNode {
                 <button
                   type="button"
                   className={styles['addButton']}
-                  disabled={protocols.length === 0 || !state.writable}
+                  disabled={protocols.length === 0 || !state.writable || !state.canMutate}
                   onClick={() => {
                     setSavedTarget(undefined)
                     setAdding(false)

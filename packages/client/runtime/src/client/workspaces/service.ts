@@ -72,6 +72,20 @@ export class WorkspaceRuntime implements IWorkspaces {
     this.manager.subscribe(() => { this.project() })
     this.sessions.list.subscribe(() => { this.project() })
     ctx.reflect.provide('workspaces', this, undefined)
+    void this.probeRole()
+  }
+
+  private role: 'admin' | 'user' | undefined
+  private async probeRole(): Promise<void> {
+    try {
+      const resp = await fetch('/api/auth/me', { credentials: 'include' })
+      if (!resp.ok) return
+      const body = await resp.json() as { role?: unknown }
+      this.role = body.role === 'admin' ? 'admin' : 'user'
+      this.project()
+    } catch {
+      // No auth / network unavailable — leave items unfiltered (single-user posture).
+    }
   }
 
   /**
@@ -334,6 +348,13 @@ export class WorkspaceRuntime implements IWorkspaces {
     const workspace = this.manager.getSnapshot()
     const sessions = this.sessions.list.getSnapshot()
     const baselinesReady = workspace.phase === 'ready' && sessions.phase === 'ready'
+    // Role-gated workspace visibility: a `user` role never sees server-host
+    // workspaces (those without a `remote` facet). The server already filters
+    // them (api-proxy.ts canSeeServerWorkspace), but also hide them locally so
+    // the UI does not flash before the next baseline lands.
+    const visibleItems = this.role === 'user'
+      ? workspace.items.filter(ws => (ws as { remote?: unknown }).remote !== undefined)
+      : workspace.items
     // An archived current selection clears into the New Session view state —
     // a hidden row must not stay open behind the list. Sweeping here covers
     // every install path with one rule: the local unary echo, another tab's
@@ -343,13 +364,13 @@ export class WorkspaceRuntime implements IWorkspaces {
       this.sessions.clear()
     }
     this.list.set({
-      items: workspace.items,
+      items: visibleItems,
       archivedSessionIds: workspace.archivedSessionIds,
       state: workspace.state,
       phase: workspace.phase,
       error: workspace.error,
       baselinesReady,
-      recentWorkspaceId: baselinesReady ? recentWorkspace(workspace.items, sessions.byId) : undefined,
+      recentWorkspaceId: baselinesReady ? recentWorkspace(visibleItems, sessions.byId) : undefined,
     })
   }
 }

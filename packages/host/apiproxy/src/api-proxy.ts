@@ -1074,6 +1074,11 @@ function workspaceNotFound<T>(request: RpcRequest<unknown>, workspaceId: string)
   })
 }
 
+/** Whether the caller's role may observe a server-host workspace. */
+function canSeeServerWorkspace(): boolean {
+  return currentRole() !== 'user'
+}
+
 /** Wire projection of one workspace entity (the workspace.* value row). */
 function workspaceView(workspace: Workspace): WorkspaceView {
   return {
@@ -1084,6 +1089,7 @@ function workspaceView(workspace: Workspace): WorkspaceView {
     createdAt: workspace.createdAt,
     updatedAt: workspace.updatedAt,
     ...workspace.owner === undefined ? {} : { owner: workspace.owner },
+    ...workspace.remote === undefined ? {} : { remote: { ...workspace.remote } },
   }
 }
 
@@ -1098,6 +1104,7 @@ function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceVie
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
     ...record.owner === undefined ? {} : { owner: record.owner },
+    ...record.remote === undefined ? {} : { remote: { ...record.remote } },
   }
 }
 
@@ -3013,8 +3020,22 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // Per-user isolation: a defined principal sees only workspaces they own
         // plus legacy (owner-less/shared) records. An undefined principal
         // (no auth composed / single-user) sees the whole registry, unchanged.
+        // Additionally, a non-admin `user` role never sees server workspaces
+        // (those whose directory is on the server host, i.e. `remote === undefined`).
+        // Runner/device workspaces have `remote: { userId, deviceId }` and are handled
+        // by the ordinary owner-isolation clause below. Only an `admin` (or an
+        // unauthenticated/single-user deployment where role/ principal is undefined)
+        // sees the server-host directories (e.g. 9router, deepseek-harness, Project,
+        // rian_running_coach).
         const items = ctx.workspaceRegistry.list()
-          .filter(ws => principal === undefined || ws.owner === undefined || ws.owner === principal)
+          .filter((ws) => {
+            if (principal === undefined) return true
+            // Server-host workspace: visible only to admin (or to nobody via the
+            // existing owner-less clause — but owner-less server rows must not leak
+            // to a plain `user` either, so gate them explicitly here).
+            if (ws.remote === undefined && !canSeeServerWorkspace()) return false
+            return ws.owner === undefined || ws.owner === principal
+          })
           .map(workspaceView)
         return Promise.resolve(ok(request, {
           items,
@@ -3043,6 +3064,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const { payload } = request
         const workspace = ctx.workspaceRegistry.get(brandWorkspaceId(payload.workspaceId))
         if (workspace === undefined) return workspaceNotFound(request, payload.workspaceId)
+        if (workspace.remote === undefined && !canSeeServerWorkspace()) {
+          return workspaceNotFound(request, payload.workspaceId)
+        }
         const principal = currentPrincipal()
         if (principal !== undefined && workspace.owner !== undefined && workspace.owner !== principal) {
           return workspaceNotFound(request, payload.workspaceId)
@@ -3091,6 +3115,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         // ids, so an absent-or-not-owned id reports `workspace-not-found` with
         // no existence leak.
         const existing = ctx.workspaceRegistry.get(brandWorkspaceId(workspaceId))
+        if (existing !== undefined && existing.remote === undefined && !canSeeServerWorkspace()) {
+          return workspaceNotFound(request, workspaceId)
+        }
         const principal = currentPrincipal()
         if (existing !== undefined && principal !== undefined
           && existing.owner !== undefined && existing.owner !== principal) {
@@ -3121,6 +3148,9 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const { payload } = request
         const workspace = ctx.workspaceRegistry.get(brandWorkspaceId(payload.workspaceId))
         if (workspace === undefined) return workspaceNotFound(request, payload.workspaceId)
+        if (workspace.remote === undefined && !canSeeServerWorkspace()) {
+          return workspaceNotFound(request, payload.workspaceId)
+        }
         const principal = currentPrincipal()
         if (principal !== undefined && workspace.owner !== undefined && workspace.owner !== principal) {
           return workspaceNotFound(request, payload.workspaceId)

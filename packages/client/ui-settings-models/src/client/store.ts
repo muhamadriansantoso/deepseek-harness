@@ -42,6 +42,8 @@ export interface ModelsSettingsState {
   credentialError: string | null
   /** Whether the settings provider accepts writes. */
   writable: boolean
+  /** Whether the current user may mutate the page (admin). False blocks Add/Edit/Remove even when writable. */
+  canMutate: boolean
   /** Every configurable provider joined with its configured/credential state. */
   rows: readonly ProviderRow[]
   /** Namespace views by ns, for the editor's schema/layers/secrets. */
@@ -99,7 +101,7 @@ function apiKeyEnvOf(namespace: SettingsNamespaceView | undefined, path: readonl
 export class ModelsSettingsStore {
   /** The snapshot the section renders from (uSES-safe store). */
   readonly store: SnapshotStore<ModelsSettingsState> = createSnapshotStore<ModelsSettingsState>({
-    status: 'idle', error: null, credentialError: null, writable: false, rows: [], namespaces: new Map(),
+    status: 'idle', error: null, credentialError: null, writable: false, canMutate: false, rows: [], namespaces: new Map(),
   })
 
   /** Latest load wins; an older response never overwrites a newer one. */
@@ -122,16 +124,27 @@ export class ModelsSettingsStore {
     let providers: ConfigurableProviderView[]
     let writable: boolean
     let views: SettingsNamespaceView[]
+    let canMutate = false
     try {
-      const [providersResponse, settingsResponse] = await Promise.all([
+      const [providersResponse, settingsResponse, roleResponse] = await Promise.all([
         this.api.llm.providers({}),
         this.api.settings.describe({}),
+        fetch('/api/auth/me', { credentials: 'include' })
+          .then(async (resp) => {
+            if (!resp.ok) return { canMutate: false }
+            try {
+              const body = await resp.json() as { role?: unknown }
+              return { canMutate: body.role === 'admin' }
+            } catch { return { canMutate: false } }
+          })
+          .catch(() => ({ canMutate: false } as const)),
       ])
       if (!providersResponse.result.ok) throw new Error(providersResponse.result.error.message)
       if (!settingsResponse.result.ok) throw new Error(settingsResponse.result.error.message)
       providers = providersResponse.result.value.providers
       writable = settingsResponse.result.value.writable
       views = settingsResponse.result.value.namespaces
+      canMutate = roleResponse.canMutate
     } catch (error) {
       if (generation !== this.generation) return
       this.store.update((s) => {
@@ -178,6 +191,7 @@ export class ModelsSettingsStore {
       s.error = null
       s.credentialError = credentialError
       s.writable = writable
+      s.canMutate = canMutate
       s.rows = rows.map(row => ({
         ...row,
         ...row.apiKeyEnv !== undefined && credentials[row.apiKeyEnv] !== undefined
