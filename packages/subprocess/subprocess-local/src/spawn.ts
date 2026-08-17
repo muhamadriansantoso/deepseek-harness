@@ -34,8 +34,29 @@ import { linuxProcessGroupHasLiveMembers } from './process-inspector.ts'
  * @param extra - explicit caller entries and tombstones, merged after the scrub.
  * @returns the environment to hand to `spawn` for the child process.
  */
+/**
+ * Windows baseline keys that must be present for CreateProcess to spawn a
+ * system executable (powershell.exe, cmd.exe) — without SystemRoot/WINDIR the
+ * loader cannot resolve the exe's DLL deps and spawn fails with ENOENT even
+ * though the file exists. The scrub path may drop one of these (Scrubbed =
+ * sensitives + DSH_* removed, not "only what we want to keep"), so restore the
+ * host values when absent. Keys are handled case-insensitively because Windows
+ * env is case-insensitive and callers may use any casing.
+ */
+const WIN32_BASELINE_ENV_KEYS = ['SystemRoot', 'WINDIR', 'SystemDrive', 'ComSpec', 'PATHEXT'] as const
+
 export function childEnv(extra?: Readonly<NodeJS.ProcessEnv>): NodeJS.ProcessEnv {
   const env = scrubbedParentEnv()
+  // Ensure the Windows baseline survives the scrub even when the parent carried
+  // it under a different casing or the child env explicitly omitted it.
+  if (process.platform === 'win32') {
+    const present = new Set(Object.keys(env).map(key => key.toUpperCase()))
+    for (const key of WIN32_BASELINE_ENV_KEYS) {
+      if (!present.has(key.toUpperCase()) && process.env[key] !== undefined) {
+        env[key] = process.env[key] as string
+      }
+    }
+  }
   if (process.platform !== 'win32') return { ...env, ...extra }
   let entries: [string, string | undefined][] = Object.entries(env)
   for (const [key, value] of Object.entries(extra ?? {})) {
