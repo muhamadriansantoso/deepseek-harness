@@ -1104,17 +1104,16 @@ function sessionInServerWorkspace(
   // can never be a server-host session; skip the index walk. This catches a
   // just-created remote session whose path has not yet landed in the index.
   if (header?.deviceId !== undefined) return false
+  // A header without any cwd is header-less for membership — there is no path to
+  // test against any server workspace, so it can never be a server-host session.
+  if (header === undefined
+    || (header.cwd === undefined && registry.cwdForSession(sessionId) === undefined)) {
+    return false
+  }
   const indexed = registry.cwdForSession(sessionId)
-  const fallback = header?.cwd
-  const path = indexed ?? fallback
+  const fallback = header.cwd
   const canonical = indexed ?? registry.canonicalPathForSession(sessionId, header as { readonly cwd?: string } | undefined) ?? fallback
   if (canonical === undefined) return false
-  // Prefer the most canonical spelling we have — indexed canonical, else the
-  // registry's canonical-for-session helper, else the raw header cwd — and test
-  // it against every server-host entity path. The path and entity path live in
-  // the same canonical namespace (realpath for locals), so exact match is the
-  // correct membership test.
-  void path
   for (const entity of registry.list()) {
     if (entity.remote !== undefined) continue
     if (entity.path === canonical) return true
@@ -1379,20 +1378,32 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const principal = currentPrincipal()
     if (principal === undefined) return undefined
     const liveHeader = ctx.sessions.get(sessionId)?.header ?? ctx.agents.get(sessionId)?.session.header
-    let header: { readonly cwd?: string } | undefined
+    let header: { readonly cwd?: string; readonly deviceId?: string } | undefined
     if (liveHeader !== undefined) {
-      header = liveHeader.cwd === undefined ? {} : { cwd: liveHeader.cwd }
+      header = liveHeader.cwd === undefined
+        ? { ...liveHeader.deviceId === undefined ? {} : { deviceId: liveHeader.deviceId } }
+        : { cwd: liveHeader.cwd, ...liveHeader.deviceId === undefined ? {} : { deviceId: liveHeader.deviceId } }
     } else {
       try {
         const inspected = await inspectServable(sessionId)
-        header = inspected.meta.cwd === undefined ? {} : { cwd: inspected.meta.cwd }
+        header = inspected.meta.cwd === undefined
+          ? { ...inspected.meta.deviceId === undefined ? {} : { deviceId: inspected.meta.deviceId } }
+          : { cwd: inspected.meta.cwd, ...inspected.meta.deviceId === undefined ? {} : { deviceId: inspected.meta.deviceId } }
       } catch {
         // A not-found session has no owner to guard; the read below reports it.
         return undefined
       }
     }
-    const owner = await sessionOwnerFor(ctx, header)
+    const owner = await sessionOwnerFor(ctx, header as { readonly cwd?: string })
     if (owner !== undefined && owner !== principal) {
+      return { code: 'session-not-found', message: `session "${sessionId}" not found`, details: { sessionId } }
+    }
+    // A `user` role must not be able to read a server-host session even when
+    // that session's workspace is legacy/owner-less (owner undefined) and
+    // slipped past the owner guard. This mirrors the list/mux/host gates so no
+    // stray session ever rebuilds "Ungrouped" with content the caller may not see.
+    if (currentRole() === 'user'
+      && sessionInServerWorkspace(ctx.get('workspaceRegistry'), sessionId, header)) {
       return { code: 'session-not-found', message: `session "${sessionId}" not found`, details: { sessionId } }
     }
     return undefined

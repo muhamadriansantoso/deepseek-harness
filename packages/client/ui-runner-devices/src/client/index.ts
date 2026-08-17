@@ -59,12 +59,25 @@ export function apply(ctx: ClientContext): void {
     if (controller.store.getSnapshot().status !== 'idle') void controller.load()
   }), 'ui-runner-devices: reconnect refetch')
 
-  ctx.slots.inject('settings.section', () => ctx.slots.register({
-    name: 'settings.section',
-    id: 'runner-devices',
-    order: 30,
-    label: () => t('nav'),
-    locale: NS,
-    inject: injected,
-  }, RunnerDevicesSection))
+  // Gate the Runner Devices section on the `admin` role, mirroring `ui-admin`:
+  // the attach-workspace flow (`createRemote`) is admin-only, so a `user` never
+  // sees the nav entry. `/api/runner/*` is per-user scoped (hub is already gated
+  // by `verifySession`'s principal), so no leak occurs, but showing the section
+  // to a non-admin would offer the attach affordance where no admin can answer.
+  void (async () => {
+    try {
+      const resp = await fetch('/api/auth/me', { credentials: 'include' })
+      if (!resp.ok) return
+      const body = await resp.json() as { role?: unknown }
+      if (body.role !== 'admin') return
+    } catch { return }
+    ctx.slots.inject('settings.section', () => ctx.slots.register({
+      name: 'settings.section',
+      id: 'runner-devices',
+      order: 30,
+      label: () => t('nav'),
+      locale: NS,
+      inject: injected,
+    }, RunnerDevicesSection))
+  })()
 }
