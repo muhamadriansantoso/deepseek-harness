@@ -168,9 +168,13 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
       ws.on('message', (data) => { this.onFrame(data as string | Buffer) })
       ws.on('close', () => { this.handleClose() })
       ws.on('error', (error) => {
-        // An error before open rejects the connect promise; an error after open
-        // is followed by a close event that drives the reconnect, so ignore it
-        // once the socket has opened.
+        // A connect-time error (failed handshake): reject the openGeneration
+        // promise and LET the `close` event drive the reconnect. Passing that
+        // duty to `handleClose` keeps one scheduling point and avoids a
+        // double-orphan where both an `error→catch→schedule` and
+        // `close→handleClose→schedule` fire for the same failure (two timers
+        // where the second `openGeneration` races and can kill the winner's
+        // live call via its own close→rejectPending).
         if (this.disposed) return
         if (ws.readyState === WebSocket.OPEN) return
         reject(new Error(`runner channel error: ${error.message}`))
@@ -199,18 +203,21 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
     return cap / 2 + Math.random() * (cap / 2)
   }
 
-  /** Schedule the next reconnect attempt; cleared on dispose. */
+  /** Schedule the next reconnect attempt; cleared on dispose. Coalesces double calls. */
   private scheduleReconnect(): void {
+    if (this.reconnectTimer !== undefined) return
     const delay = this.backoffDelay()
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined
       if (this.disposed || !this.running) return
+      // `openGeneration`'s sole reconnect path is `handleClose`'s `close`
+      // event. The `catch` here must NOT re-schedule — otherwise a single
+      // connect-time failure would arm two timers (`close` + this `catch`) and
+      // create two racing sockets (the loser `close`s and `rejectPending`s the
+      // winner's live call). Just surface the error and keep reconnecting.
       void this.openGeneration().catch((error: unknown) => {
         if (this.disposed) return
-        // A failed reconnect attempt schedules the next backoff; the loop
-        // continues until dispose or a successful open.
         this.emitState('reconnecting')
-        this.scheduleReconnect()
         void error
       })
     }, delay)
@@ -357,9 +364,7 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
       await this.send({ type: 'runner-call', rpcId, method, payload: serializable })
     } catch (error: unknown) {
       const err = error instanceof Error ? error : new Error(String(error))
-      // The static narrowing that proves these re-checks "always false" cannot see
-      // handleClose()'s cross-tick mutations of `finished` / pendingStream.
-      // oxlint-disable-next-line typescript/no-unnecessary-condition
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- cross-tick: rejectPending().wake sets `finished`
       if (finished) throw err
       const entry = this.pendingStream.get(rpcId)
       if (entry !== undefined) {
@@ -374,10 +379,9 @@ export class RunnerTransport implements RunnerLlmTransport, Disposable {
           yield queue.shift() as StreamChunk
           continue
         }
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- cross-tick: rejectPending().wake sets `finished`
         if (finished) {
-          // The static narrowing that proves this re-check "always false" cannot see
-          // the cross-tick `failure = error` set in the `reject` closure.
-          // oxlint-disable-next-line typescript/no-unnecessary-condition
+          // oxlint-disable-next-line typescript/no-unnecessary-condition -- cross-tick: reject(error) sets `failure`
           if (failure !== undefined) throw failure
           return
         }
