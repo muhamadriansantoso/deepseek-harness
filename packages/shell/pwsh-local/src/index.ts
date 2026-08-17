@@ -20,6 +20,9 @@ import z from '@deepseek-ai/schemastery'
 import { SHELL_SETTINGS_NAMESPACE, ShellExecutor } from '@deepseek-ai/dsh-shell'
 import type { ShellExecRequest, ShellExecSpec, ShellProcess, ShellProcessRead, ShellRunResult, CollectedOutput } from '@deepseek-ai/dsh-shell'
 import type { SubprocessCollect, SubprocessHandle, SubprocessOutputReader, SubprocessSpawnSpec } from '@deepseek-ai/dsh-subprocess'
+import { RemoteSubprocessRuntime } from '@deepseek-ai/dsh-subprocess-remote'
+import type { RunnerConnection } from '@deepseek-ai/dsh-runner-hub'
+import { currentPrincipal } from '@deepseek-ai/dsh-principal'
 import { installSettingsSection } from '@deepseek-ai/dsh-settings'
 import { clampTimeout, deadline, MAX_TIMER_DELAY_MS, timeoutOf } from '@deepseek-ai/dsh-timeout'
 /* jscpd:ignore-end */
@@ -252,6 +255,36 @@ export class PwshLocalExecutor extends ShellExecutor {
     return { stdout, stderr }
   }
 
+  /**
+   * Remote subprocess runtimes cached per live runner connection, so a remote
+   * session does not re-allocate the adapter per command. Mirrored from
+   * `dsh-bash-local`.
+   */
+  private readonly remoteRuntimes = new WeakMap<RunnerConnection, RemoteSubprocessRuntime>()
+
+  /**
+   * Spawn a subprocess, routing to the laptop when the command's workdir belongs
+   * to a remote workspace. Mirrored from `dsh-bash-local`'s provider-level
+   * routing seam: the pwsh tool calls `ctx.shell.run`/`ctx.shell.start`; if the
+   * workspace registry reports that path as a remote (laptop) workspace, the
+   * spawn is delegated over the runner channel. Without this, a Windows remote
+   * workspace's `pwsh` tool runs on the host (where D:\sgs-sap-project is
+   * empty) instead of the laptop (where it holds .git + source).
+   */
+  private spawn(spec: ShellExecSpec, argv: readonly string[], stdoutMaxBytes: number, signal: AbortSignal | undefined): SubprocessHandle {
+    const spawnSpec = this.spawnSpec(spec, stdoutMaxBytes, signal, argv)
+    const remote = this.ctx.get('workspaceRegistry')?.findRemoteByPath(spec.workdir, currentPrincipal())
+    if (remote === undefined) return this.ctx.subprocess.spawn(spawnSpec)
+    const hub = this.ctx.get('runnerHub')
+    const conn = hub?.getConnection(remote.userId, remote.deviceId)
+    if (conn === undefined || !conn.isOpen) {
+      throw new Error(`device offline: cannot run a command in the remote workspace "${spec.workdir}" while device "${remote.deviceId}" is disconnected`)
+    }
+    const runtime = this.remoteRuntimes.get(conn) ?? new RemoteSubprocessRuntime(this.ctx.isolate('subprocess'), conn)
+    if (!this.remoteRuntimes.has(conn)) this.remoteRuntimes.set(conn, runtime)
+    return runtime.spawn(spawnSpec)
+  }
+
   async run(spec: ShellExecSpec): Promise<ShellRunResult> {
     return this.runArgv(spec, this.argv(spec))
   }
@@ -260,7 +293,7 @@ export class PwshLocalExecutor extends ShellExecutor {
   protected async runArgv(spec: ShellExecSpec, argv: readonly string[]): Promise<ShellRunResult> {
     // One deadline combines timeout and upstream cancellation; disposal clears its timer.
     using d = deadline(spec.signal, spec.timeoutMs, 'BASH_TIMEOUT')
-    const handle = this.ctx.subprocess.spawn(this.spawnSpec(spec, spec.stdoutMaxBytes, d.signal, argv))
+    const handle = this.spawn(spec, argv, spec.stdoutMaxBytes, d.signal)
     const outcome = await handle.done
     const collected = PwshLocalExecutor.collected(handle)
     // Only this executor's timeout reason counts as timedOut; outer deadlines count as aborts.
@@ -283,7 +316,7 @@ export class PwshLocalExecutor extends ShellExecutor {
   /** Background start of an exact argv (the confining subclass re-wraps it). */
   protected startArgv(spec: ShellExecSpec, argv: readonly string[]): ShellProcess {
     // Background runs ignore timeoutMs; callers stop them through kill() or spec.signal.
-    const running = this.ctx.subprocess.spawn(this.spawnSpec(spec, this.config.maxOutputBytes, spec.signal, argv))
+    const running = this.spawn(spec, argv, this.config.maxOutputBytes, spec.signal)
     const collected = PwshLocalExecutor.collected(running)
 
     // A spawn failure produces no process output, so the subprocess service has nothing

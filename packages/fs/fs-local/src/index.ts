@@ -111,7 +111,7 @@ export class LocalFileSystem extends FileSystem {
   private remoteFs(conn: RunnerConnection): RemoteFileSystem {
     const existing = this.remoteFses.get(conn)
     if (existing !== undefined) return existing
-    const created = new RemoteFileSystem(this.ctx, conn)
+    const created = new RemoteFileSystem(this.ctx.isolate('fs'), conn)
     this.remoteFses.set(conn, created)
     return created
   }

@@ -246,7 +246,7 @@ export class LocalBashExecutor extends ShellExecutor {
     if (conn === undefined || !conn.isOpen) {
       throw new Error(`device offline: cannot run a command in the remote workspace "${spec.workdir}" while device "${remote.deviceId}" is disconnected`)
     }
-    const runtime = this.remoteRuntimes.get(conn) ?? new RemoteSubprocessRuntime(this.ctx, conn)
+    const runtime = this.remoteRuntimes.get(conn) ?? new RemoteSubprocessRuntime(this.ctx.isolate('subprocess'), conn)
     if (!this.remoteRuntimes.has(conn)) this.remoteRuntimes.set(conn, runtime)
     return runtime.spawn(spawnSpec)
   }
