@@ -1,0 +1,41 @@
+/* Narrow-only hamburger that opens the mobile drawer (hidden on wide viewports
+   where the sidebar is already a grid column). */
+.menuButton {
+  display: none;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.menuButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.menuIcon {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.menuIcon span {
+  display: block;
+  width: 14px;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+/* At the drawer breakpoint the center owns its own opener — the 56px rail
+   is still there but the primary entry point lives in the conversation header. */
+@media (max-width: 1024px) {
+  .menuButton {
+    display: inline-flex;
+  }
+}
