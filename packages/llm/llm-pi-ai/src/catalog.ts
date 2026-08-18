@@ -227,10 +227,10 @@ export interface PiAiModelProfile {
   input?: PiAiModality[]
   /**
    * Selectable reasoning efforts. Absent inherits the installed catalog
-   * entry's capability (a hand-declared model has none and does not reason);
-   * `false` declares a non-reasoning model, which is how a profile strips
-   * reasoning from a catalog model its gateway cannot serve; a non-empty dict
-   * declares the offered levels and their wire spellings.
+   * entry's capability (a hand-declared model defaults to the standard base
+   * level offer); `false` declares a non-reasoning model, which is how a
+   * profile strips reasoning from a catalog model its gateway cannot serve;
+   * a non-empty dict declares the offered levels and their wire spellings.
    */
   reasoningEfforts?: false | PiAiReasoningEfforts
   /** Reasoning-dispatch switches for this model, winning over the route's. */
@@ -319,12 +319,14 @@ function resolveModelReasoning(
 ): ModelReasoning {
   const efforts = entry.reasoningEfforts
   if (efforts === undefined) {
-    // Reasoning rides the installed entry or is absent: a bare capability flag
-    // would make pi-ai advertise effort levels with no `thinkingLevelMap` to
-    // spell them, and no listing endpoint reports a model's reasoning
-    // protocol. The entry's map (when any) arrives through the `...base`
-    // spread in the model literal.
-    return { reasoning: base?.reasoning ?? false }
+    // Reasoning rides the installed entry's capability; a hand-declared model
+    // (no installed entry) defaults to reasoning-capable so the composer can
+    // offer the standard base level set without a declaration. A bare flag
+    // makes pi-ai spell the base levels with its own defaults — the entry's
+    // map (when any) arrives through the `...base` spread in the model
+    // literal — and `reasoningEfforts` exists for a gateway whose dialect or
+    // level set differs from pi-ai's defaults.
+    return { reasoning: base === undefined ? true : (base.reasoning ?? false) }
   }
   // The installed entry's map may ride along through `...base`; pi-ai never
   // reads it on a non-reasoning model, so stripping it is not worth a field

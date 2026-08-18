@@ -506,6 +506,50 @@
   padding: 8px 4px 2px;
 }
 
+.modelEffort {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+}
+
+.selectInput {
+  min-width: 0;
+}
+
+.effortLevels {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.effortLevel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.effortLevelName {
+  flex: none;
+  min-width: 56px;
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.effortWire {
+  max-width: 240px;
+}
+
+.effortHint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .modelField {
   display: flex;
   flex-direction: column;

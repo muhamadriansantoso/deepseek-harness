@@ -7,16 +7,15 @@
  * a key is entered; a blank key materializes a reference-free profile for
  * provider-native authentication);
  * the collapsed 自定义设置 area carries the per-family extras (`baseURL` for
- * both families, DeepSeek's id/name/context-window model catalog, and the
+ * both families, DeepSeek's id/name/context-window model catalog, the
  * display name and wire protocol of a pi-ai route the adapter does not ship —
  * the two fields the create card asked that route for, editable here for the
- * same reason).
- * Reasoning effort is deliberately absent: it is a per-MODEL capability, and
- * the models under one provider disagree about it, so a provider-scoped
- * control can only be set to a value some of them reject. The composer's
- * model picker offers each model its own levels; `settings.yaml` keeps the
- * profile field for a deployment that knows its route. Everything else stays
- * owned by `settings.yaml`. Profile edits land as minimal `settings.mutate`
+ * same reason), and for pi-ai, each model's reasoning efforts. A pi-ai model
+ * row keeps its own `reasoningEfforts` — a provider-scoped control could only
+ * be set to a value some models reject. The composer's model picker offers
+ * each model its own levels; the remaining route-level `reasoning` and `compat`
+ * switches stay in `settings.yaml` for a deployment that knows its gateway.
+ * Everything else stays owned by `settings.yaml`. Profile edits land as minimal `settings.mutate`
  * path ops against the stored section — the card names only the fields it can
  * see instead of rebuilding the whole subtree from a partial descriptor.
  */

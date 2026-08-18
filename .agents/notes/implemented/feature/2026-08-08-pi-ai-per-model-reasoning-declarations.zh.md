@@ -31,3 +31,4 @@ Status: implemented
 - #1860 暂缓的缺口——模型接不住的路由级档位会让发往它的请求失败——如今有了运维侧补救：对齐该模型的 `reasoningEfforts`，或去掉路由默认值。
 - 刻意不提供任何把单个 map 键或 compat 字段交还给「catalog 原本怎么说」的拼写：这份声明就是对外提供的全部，要保留某个 catalog 值就得重述它。README 记载了这一点。
 - `verify-package-invariants` 原封未动：该功能新增的是配置解析，没有新事件，也没有可变的运行时关系。
+- 模型页现在通过其按模型推理档位编辑器直接编辑这些声明（[[2026-08-17-pi-ai-reasoning-effort-settings-editor]]）。

@@ -31,3 +31,4 @@ Two adjacent gaps compounded this. pi-ai decides the reasoning *wire dialect* (`
 - #1860's deferred gap — a route-level effort a model cannot take failing its requests — now has an operator remedy: align the model's `reasoningEfforts` or drop the route default.
 - There is deliberately no spelling for returning one map key or compat field to "whatever the catalog said": the declaration is the whole offer, so keeping a catalog value means restating it. The README documents this.
 - `verify-package-invariants` is untouched: the feature adds configuration resolution, no new events or mutable runtime relations.
+- The Models page now edits these declarations through its per-model reasoning-effort editor ([[2026-08-17-pi-ai-reasoning-effort-settings-editor]]).

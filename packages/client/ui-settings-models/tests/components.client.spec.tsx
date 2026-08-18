@@ -20,6 +20,11 @@ import { en } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
+// The store probes /api/auth/me for the admin role and gates every mutation on
+// it; these fixtures drive the probe to the admin role so the section renders
+// its editing surface.
+vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ role: 'admin' }) })))
+
 const t: ModelsSectionInjected['t'] = key => en[key]
 const OPENAI_TARGET = { provider: 'openai', displayName: 'openai' }
 const openaiCopy = (template: string): string => providerCopy(template, OPENAI_TARGET)
@@ -503,6 +508,38 @@ describe('ModelsSection', () => {
     expect(validateDeepSeekModels([{ id: 'model', maxTokens: 0 }]))
       .toEqual({ index: 0, key: 'modelMaxTokensInvalid' })
     expect(validateDeepSeekModels([{ id: 'model', maxTokens: 8192 }])).toBeUndefined()
+  })
+
+  it('validates per-model reasoning-effort declarations', () => {
+    // Absent and the adapter default are both valid — the editor leaves them be.
+    expect(validateDeepSeekModels([{ id: 'model' }])).toBeUndefined()
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: false }])).toBeUndefined()
+    // A non-reasoning model is false; null, arrays, and primitives are not the
+    // declaration shape and must be refused before a write.
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: null }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsInvalid' })
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: [] }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsInvalid' })
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: 'high' }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsInvalid' })
+    // An empty declaration is refused rather than guessed at.
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: {} }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsInvalid' })
+    // An unknown level id is refused; the editor offers only the pinned seven.
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: { turbo: 'turbo' } }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsInvalid' })
+    // Off alone is not an offer: it sends nothing, so it cannot be the whole
+    // capability set a profile declares for a model.
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: { off: null } }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsNeedLevel' })
+    // Every level beyond Off needs the wire value the endpoint expects.
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: { high: '' } }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsWireRequired' })
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: { high: null } }]))
+      .toEqual({ index: 0, key: 'reasoningEffortsWireRequired' })
+    // A complete declaration passes.
+    expect(validateDeepSeekModels([{ id: 'model', reasoningEfforts: { off: null, high: 'high' } }]))
+      .toBeUndefined()
   })
 
   it('reads context windows written as counts, thousands, or millions', () => {

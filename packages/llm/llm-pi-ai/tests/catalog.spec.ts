@@ -112,23 +112,23 @@ describe('hand-declared providers', () => {
     })
   })
 
-  it('offers no reasoning control it could not honour', async () => {
+  it('defaults a hand-declared model to the standard level offer', async () => {
     const server = await mockServer([])
     const ctx = await harness(gateway(`${server.url}/v1`))
 
-    // pi-ai reports a model with no reasoning metadata as supporting the single
-    // level `off`, but `off` is translated to *omitting* the reasoning option —
-    // byte-for-byte the same request as naming no effort — so a provider whose
-    // own default is to think would keep thinking with `off` selected. The
-    // capability is reported unavailable instead of offering that control.
-    expect((await ctx.llm.resolveModelInfo('acme-gateway', 'acme-large')).reasoning).toBeUndefined()
+    // A hand-declared model defaults to reasoning-capable with pi-ai's
+    // standard base level offer — off plus minimal/low/medium/high — so the
+    // composer can offer an effort picker without a declaration. `xhigh`/`max`
+    // stay out until declared, per pi-ai's asymmetric defaulting.
+    expect((await ctx.llm.resolveModelInfo('acme-gateway', 'acme-large')).reasoning?.efforts.map(effort => effort.id))
+      .toEqual(['off', 'minimal', 'low', 'medium', 'high'])
 
     // A catalog route is unaffected: its models carry the metadata that makes
     // `off` actually disable thinking.
     const withCatalog = await harness({ providers: { deepseek: { baseURL: server.url } } })
     const [catalogModel] = getBuiltinModels('deepseek')
     if (catalogModel === undefined) throw new Error('the installed catalog ships no deepseek model')
-    expect((await withCatalog.llm.resolveModelInfo('deepseek', catalogModel.id)).reasoning?.efforts.map(e => e.id))
+    expect((await withCatalog.llm.resolveModelInfo('deepseek', catalogModel.id)).reasoning?.efforts.map(effort => effort.id))
       .toContain('off')
   })
 

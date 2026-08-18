@@ -18,7 +18,7 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { DiscoveredModelView, IApiClient } from '@deepseek-ai/dsh-api-remotes/client'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import { formatCapacity, parseCapacity } from './DeepSeekModelsEditor.tsx'
+import { formatCapacity, parseCapacity, REASONING_LEVELS } from './DeepSeekModelsEditor.tsx'
 import type { DeepSeekModelDraft } from './DeepSeekModelsEditor.tsx'
 import { messageOf } from './store.ts'
 import type { en } from './locales.ts'
@@ -210,6 +210,22 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
     })
   }
 
+  /**
+   * Apply a partial profile update for one model row, also owned by the
+   * reasoning-effort editor: its own mutation path writes an object value that
+   * may be `null` or hold `''` transiently, so it bypasses the text-field
+   * `''`-cleared convention used by the id/name/capacity helpers.
+   */
+  const patchEfforts = (index: number, next: unknown): void => {
+    onChange(models.map((model, at) => {
+      if (at !== index) return model
+      const copy = { ...model } as Record<string, unknown>
+      if (next === undefined) Reflect.deleteProperty(copy, 'reasoningEfforts')
+      else copy['reasoningEfforts'] = next
+      return copy as DeepSeekModelDraft
+    }))
+  }
+
   const patch = (index: number, next: Record<string, string | number | undefined>): void => {
     onChange(models.map((model, at) => {
       if (at !== index) return model
@@ -389,36 +405,117 @@ export function ModelListEditor(props: ModelListEditorProps): ReactNode {
             </button>
           </div>
           {expanded.has(index)
-            ? (
-              <div className={styles['modelAdvanced']}>
-                <label className={styles['modelField']}>
-                  <span className={styles['modelFieldLabel']}>{t('modelContextWindow')}</span>
-                  <input
-                    className={styles['input']}
-                    type="text"
-                    inputMode="numeric"
-                    value={capacityText(model, index, 'contextWindow')}
-                    placeholder={CAPACITY_HINT.contextWindow}
-                    aria-label={`${t('modelContextWindow')} ${index + 1}`}
-                    disabled={disabled}
-                    onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
-                  />
-                </label>
-                <label className={styles['modelField']}>
-                  <span className={styles['modelFieldLabel']}>{t('modelMaxTokens')}</span>
-                  <input
-                    className={styles['input']}
-                    type="text"
-                    inputMode="numeric"
-                    value={capacityText(model, index, 'maxTokens')}
-                    placeholder={CAPACITY_HINT.maxTokens}
-                    aria-label={`${t('modelMaxTokens')} ${index + 1}`}
-                    disabled={disabled}
-                    onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
-                  />
-                </label>
-              </div>
-            )
+            ? (() => {
+              const reasoning = (model as Record<string, unknown>)['reasoningEfforts']
+              const effortMode = reasoning === undefined
+                ? 'unset'
+                : reasoning === false
+                  ? 'non-reasoning'
+                  : 'custom'
+              const effortDict = typeof reasoning === 'object' && reasoning !== null && !Array.isArray(reasoning)
+                ? reasoning as Record<string, unknown>
+                : {}
+              const wireText = (level: string): string => {
+                const value = effortDict[level]
+                return typeof value === 'string' ? value : ''
+              }
+              const changeEffortMode = (value: string): void => {
+                if (value === 'unset') patchEfforts(index, undefined)
+                else if (value === 'non-reasoning') patchEfforts(index, false)
+                else {
+                  // First open seeds valueless Off — requesting nothing; the
+                  // per-model validation will prompt the user to pick levels.
+                  const seed = Object.keys(effortDict).length === 0 ? { off: null } : effortDict
+                  patchEfforts(index, seed)
+                }
+              }
+              const toggleLevel = (level: string): void => {
+                const next = { ...effortDict }
+                if (level in next) Reflect.deleteProperty(next, level)
+                else next[level] = level === 'off' ? null : level
+                patchEfforts(index, next)
+              }
+              const changeWire = (level: string, text: string): void => {
+                const next = { ...effortDict }
+                next[level] = level === 'off' && text.length === 0 ? null : text
+                patchEfforts(index, next)
+              }
+              return (
+                <div className={styles['modelAdvanced']}>
+                  <label className={styles['modelField']}>
+                    <span className={styles['modelFieldLabel']}>{t('modelContextWindow')}</span>
+                    <input
+                      className={styles['input']}
+                      type="text"
+                      inputMode="numeric"
+                      value={capacityText(model, index, 'contextWindow')}
+                      placeholder={CAPACITY_HINT.contextWindow}
+                      aria-label={`${t('modelContextWindow')} ${index + 1}`}
+                      disabled={disabled}
+                      onChange={(event) => { editCapacity(index, 'contextWindow', event.target.value) }}
+                    />
+                  </label>
+                  <label className={styles['modelField']}>
+                    <span className={styles['modelFieldLabel']}>{t('modelMaxTokens')}</span>
+                    <input
+                      className={styles['input']}
+                      type="text"
+                      inputMode="numeric"
+                      value={capacityText(model, index, 'maxTokens')}
+                      placeholder={CAPACITY_HINT.maxTokens}
+                      aria-label={`${t('modelMaxTokens')} ${index + 1}`}
+                      disabled={disabled}
+                      onChange={(event) => { editCapacity(index, 'maxTokens', event.target.value) }}
+                    />
+                  </label>
+                  <div className={styles['modelEffort']}>
+                    <span className={styles['modelFieldLabel']}>{t('reasoningEfforts')}</span>
+                    <select
+                      className={`${styles['input']} ${styles['selectInput']}`}
+                      value={effortMode}
+                      aria-label={`${t('reasoningEfforts')} ${index + 1}`}
+                      disabled={disabled}
+                      onChange={(event) => { changeEffortMode(event.target.value) }}
+                    >
+                      <option value="unset">{t('reasoningEffortsUnset')}</option>
+                      <option value="non-reasoning">{t('reasoningEffortsNonReasoning')}</option>
+                      <option value="custom">{t('reasoningEffortsCustom')}</option>
+                    </select>
+                    {effortMode === 'custom'
+                      ? (
+                        <div className={styles['effortLevels']}>
+                          {REASONING_LEVELS.map((level) => {
+                            const checked = level in effortDict
+                            return (
+                              <label className={styles['effortLevel']} key={level}>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  aria-label={`${t('reasoningLevel')} ${level} ${index + 1}`}
+                                  disabled={disabled}
+                                  onChange={() => { toggleLevel(level) }}
+                                />
+                                <span className={styles['effortLevelName']}>{level}</span>
+                                <input
+                                  className={`${styles['input']} ${styles['effortWire']}`}
+                                  type="text"
+                                  value={wireText(level)}
+                                  placeholder={level === 'off' ? t('reasoningOffWireHint') : level}
+                                  aria-label={`${t('reasoningWire')} ${level} ${index + 1}`}
+                                  disabled={disabled || !checked}
+                                  onChange={(event) => { changeWire(level, event.target.value) }}
+                                />
+                              </label>
+                            )
+                          })}
+                        </div>
+                      )
+                      : null}
+                    <span className={styles['effortHint']}>{t('reasoningEffortsHint')}</span>
+                  </div>
+                </div>
+              )
+            })()
             : null}
         </div>
       ))}

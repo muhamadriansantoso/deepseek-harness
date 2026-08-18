@@ -30,6 +30,7 @@ const EMPTY_EXPECTED = join(SNAPSHOT_DIR, 'empty.expected.md')
 const CONFIGURED_EXPECTED = join(SNAPSHOT_DIR, 'configured.expected.md')
 const DECLARED_EXPECTED = join(SNAPSHOT_DIR, 'declared.expected.md')
 const DECLARED_EDIT_EXPECTED = join(SNAPSHOT_DIR, 'declared-edit.expected.md')
+const DECLARED_EFFORT_EXPECTED = join(SNAPSHOT_DIR, 'declared-effort.expected.md')
 const NATIVE_DELETE_EXPECTED = join(SNAPSHOT_DIR, 'native-delete.expected.md')
 const DELETE_EXPECTED = join(SNAPSHOT_DIR, 'delete.expected.md')
 const MODE = webSnapshotMode()
@@ -245,6 +246,35 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
     expect(tripwire.pageErrors).toEqual([])
   }, 60_000)
 
+  it('declares per-model reasoning efforts in the route\'s model rows', async () => {
+    onTestFailed(() => saveFailureShot(page, 'web-e2e-models-reasoning-effort'))
+    const dialog = page.getByRole('dialog', { name: '设置' })
+    await dialog.getByRole('button', { name: '编辑 Acme 网关 (acme-gateway)' }).click()
+    await dialog.getByText('自定义设置').click()
+    // The route's model row carries its own effort offer: effort is a
+    // per-model capability, so a provider-level switch could only be set to a
+    // value some models reject. The row defaults to no declaration.
+    await dialog.getByLabel('容量 1').click()
+    const mode = dialog.getByLabel('推理档位 1')
+    await mode.waitFor({ timeout: 10_000 })
+    expect(await mode.inputValue()).toBe('unset')
+    await mode.selectOption('custom')
+    // Custom seeds valueless Off (dispatch sends nothing); checking a
+    // thinking level seeds its wire input with the level id.
+    await dialog.getByLabel('档位 high 1').click()
+    const snapshot = await captureStableAria(page, '[role="dialog"]', scaffold.workspaceCwd)
+    await compareOrRefreshGolden(DECLARED_EFFORT_EXPECTED, snapshot, MODE)
+
+    await dialog.getByRole('button', { name: '保存', exact: true }).click()
+    await expect.poll(async () => dialog.getByLabel('推理档位 1').count(), { timeout: 10_000 }).toBe(0)
+    await dialog.getByText('已保存 Acme 网关 (acme-gateway)。', { exact: true }).waitFor({ timeout: 10_000 })
+    const document = await readFile(join(scaffold.harnessHome, 'settings.yaml'), 'utf8')
+    expect(document).toContain('acme-gateway:')
+    expect(document).toContain('reasoningEfforts:')
+    expect(document).toContain('high: high')
+    expect(tripwire.pageErrors).toEqual([])
+  }, 60_000)
+
   it('confirms an identified provider deletion before removing its profile and key', async () => {
     onTestFailed(() => saveFailureShot(page, 'web-e2e-models-delete'))
     const settingsDialog = page.getByRole('dialog', { name: '设置' })
@@ -279,8 +309,8 @@ describe('web e2e: Models settings page configures a dormant provider', () => {
 
   it.skipIf(MODE === 'record')('keeps the fixture inventory closed', async () => {
     await assertFixtureInventory(SNAPSHOT_DIR, [
-      'configured.expected.md', 'declared-edit.expected.md', 'declared.expected.md',
-      'delete.expected.md', 'empty.expected.md', 'native-delete.expected.md',
+      'configured.expected.md', 'declared-edit.expected.md', 'declared-effort.expected.md',
+      'declared.expected.md', 'delete.expected.md', 'empty.expected.md', 'native-delete.expected.md',
     ])
   })
 })

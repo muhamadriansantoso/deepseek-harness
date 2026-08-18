@@ -68,13 +68,31 @@ export function formatCapacity(value: number): string {
   return String(value)
 }
 
+/**
+ * Every reasoning level the settings page lets a pi-ai model offer, in
+ * pi-ai's escalation order. The same list drives validation and the editor.
+ */
+export const REASONING_LEVELS = [
+  'off',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const
+
+/** One member of {@link REASONING_LEVELS}. */
+export type ReasoningLevel = typeof REASONING_LEVELS[number]
+
 /** A localized validation failure for one user-owned model array. */
 export interface DeepSeekModelsValidationFailure {
   /** Zero-based model position. */
   index: number
   /** Message key owned by the Models settings section. */
   key: 'modelIdRequired' | 'modelIdDuplicate' | 'modelNameInvalid' | 'modelContextInvalid'
-  | 'modelMaxTokensInvalid'
+  | 'modelMaxTokensInvalid' | 'reasoningEffortsInvalid' | 'reasoningEffortsNeedLevel'
+  | 'reasoningEffortsWireRequired'
 }
 
 /** Convert a schema-validated catalog value into records without dropping hidden fields. */
@@ -117,6 +135,33 @@ export function validateDeepSeekModels(value: unknown): DeepSeekModelsValidation
     if (maxTokens !== undefined
       && (typeof maxTokens !== 'number' || !Number.isInteger(maxTokens) || maxTokens <= 0)) {
       return { index, key: 'modelMaxTokensInvalid' }
+    }
+    const efforts = model['reasoningEfforts']
+    if (efforts !== undefined && efforts !== false) {
+      if (
+        efforts === null
+        || typeof efforts !== 'object'
+        || Array.isArray(efforts)
+      ) return { index, key: 'reasoningEffortsInvalid' }
+      const dict = efforts as Record<string, unknown>
+      const keys = Object.keys(dict)
+      if (keys.length === 0) return { index, key: 'reasoningEffortsInvalid' }
+      let beyondOff = false
+      for (const [level, wire] of Object.entries(dict)) {
+        const isKnown = (REASONING_LEVELS as readonly string[]).includes(level)
+        if (!isKnown) return { index, key: 'reasoningEffortsInvalid' }
+        if (level === 'off') {
+          if (wire !== null && (typeof wire !== 'string' || wire.length === 0)) {
+            return { index, key: 'reasoningEffortsInvalid' }
+          }
+        } else {
+          beyondOff = true
+          if (typeof wire !== 'string' || wire.length === 0) {
+            return { index, key: 'reasoningEffortsWireRequired' }
+          }
+        }
+      }
+      if (!beyondOff) return { index, key: 'reasoningEffortsNeedLevel' }
     }
   }
   return undefined

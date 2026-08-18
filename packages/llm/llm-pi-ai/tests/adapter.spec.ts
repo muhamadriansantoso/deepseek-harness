@@ -437,10 +437,11 @@ describe('provider profile lifecycle', () => {
       ReasoningEffortId('xhigh'),
       ReasoningEffortId('max'),
     ])
-    // A catalog model without reasoning is the same case as a hand-declared
-    // one: pi-ai reports the single level `off`, which translates to omitting
-    // the reasoning option — exactly what naming no effort already does. The
-    // capability is reported unavailable rather than offering that control.
+    // A catalog model without reasoning metadata is reported unavailable
+    // rather than offering the single `off` level pi-ai reports: `off`
+    // translates to omitting the reasoning option — exactly what naming no
+    // effort already does — so such a control could not disable anything.
+    // (A hand-declared model differs: it defaults to the standard offer.)
     expect((await ctx.llm.resolveModelInfo('openai', 'gpt-4.1')).reasoning).toBeUndefined()
   })
 

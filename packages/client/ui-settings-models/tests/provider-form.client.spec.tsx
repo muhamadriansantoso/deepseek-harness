@@ -14,6 +14,11 @@ import { en } from '../src/client/locales.ts'
 
 afterEach(cleanup)
 
+// The store probes /api/auth/me for the admin role and gates every mutation on
+// it; these fixtures drive the probe to the admin role so the section renders
+// its editing surface.
+vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ role: 'admin' }) })))
+
 const t: ModelsSectionInjected['t'] = key => en[key]
 
 const PROTOCOLS = ['openai-completions', 'openai-responses', 'anthropic-messages']
@@ -381,6 +386,90 @@ describe('model list editing', () => {
     await waitFor(() => { expect(mutate).toHaveBeenCalled() })
     expect(firstMutate(mutate).ops)
       .toContainEqual({ op: 'unset', path: ['providers', 'openai', 'models'] })
+  })
+
+  it('declares reasoning efforts per model and writes their wire values', async () => {
+    const { mutate } = await mountSection()
+    openEditor('openai')
+
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'acme-reasoner' } })
+    expandModel(1)
+
+    // Default: no declaration; the select sits on the unset choice.
+    const mode = screen.getByLabelText<HTMLSelectElement>(`${en.reasoningEfforts} 1`)
+    expect(mode.value).toBe('unset')
+
+    fireEvent.change(mode, { target: { value: 'custom' } })
+    // Custom seeds valueless Off (dispatch sends nothing), so the Off level is
+    // already checked; checking a thinking level seeds its wire with the id.
+    expect(screen.getByLabelText<HTMLInputElement>(`${en.reasoningLevel} off 1`).checked).toBe(true)
+    fireEvent.click(screen.getByLabelText(`${en.reasoningLevel} high 1`))
+    expect(screen.getByLabelText<HTMLInputElement>(`${en.reasoningWire} high 1`).value).toBe('high')
+    expect(screen.getByLabelText<HTMLInputElement>(`${en.reasoningWire} off 1`).value).toBe('')
+
+    fireEvent.click(screen.getByText(en.apply))
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops[0]?.value).toEqual([
+      { id: 'acme-reasoner', reasoningEfforts: { off: null, high: 'high' } },
+    ])
+  })
+
+  it('refuses a custom level whose wire value is empty', async () => {
+    const { mutate } = await mountSection()
+    openEditor('openai')
+
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'm' } })
+    expandModel(1)
+
+    const mode = screen.getByLabelText<HTMLSelectElement>(`${en.reasoningEfforts} 1`)
+    fireEvent.change(mode, { target: { value: 'custom' } })
+    fireEvent.click(screen.getByLabelText(`${en.reasoningLevel} low 1`))
+    // Clearing the seeded value must not silently unoffer the level: the write
+    // is refused and the text stays for correction.
+    fireEvent.change(screen.getByLabelText(`${en.reasoningWire} low 1`), { target: { value: '' } })
+
+    expect(screen.getByText(`${en.model} 1: ${en.reasoningEffortsWireRequired}`)).toBeTruthy()
+    expect(buttonNamed(en.apply).disabled).toBe(true)
+    expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('reads a stored reasoning-effort declaration back into the editor', async () => {
+    await mountSection({
+      providers: {
+        openai: {
+          baseURL: 'https://proxy.example/v1',
+          models: [{ id: 'kept', reasoningEfforts: { off: null, low: 'low', high: 'high' } }],
+        },
+      },
+    })
+    openEditor('openai')
+    expandModel(1)
+
+    const mode = screen.getByLabelText<HTMLSelectElement>(`${en.reasoningEfforts} 1`)
+    expect(mode.value).toBe('custom')
+    expect(screen.getByLabelText<HTMLInputElement>(`${en.reasoningLevel} high 1`).checked).toBe(true)
+    expect(screen.getByLabelText<HTMLInputElement>(`${en.reasoningLevel} medium 1`).checked).toBe(false)
+    expect(screen.getByLabelText<HTMLInputElement>(`${en.reasoningWire} high 1`).value).toBe('high')
+    // A declared Off with no value reads back empty (dispatch sends nothing).
+    expect(screen.getByLabelText<HTMLInputElement>(`${en.reasoningWire} off 1`).value).toBe('')
+  })
+
+  it('marks a model non-reasoning or restores no declaration', async () => {
+    const { mutate } = await mountSection()
+    openEditor('openai')
+
+    fireEvent.click(screen.getByRole('button', { name: en.addModel }))
+    fireEvent.change(screen.getByLabelText(`${en.modelId} 1`), { target: { value: 'm' } })
+    expandModel(1)
+
+    const mode = screen.getByLabelText<HTMLSelectElement>(`${en.reasoningEfforts} 1`)
+    fireEvent.change(mode, { target: { value: 'non-reasoning' } })
+
+    fireEvent.click(screen.getByText(en.apply))
+    await waitFor(() => { expect(mutate).toHaveBeenCalled() })
+    expect(firstMutate(mutate).ops[0]?.value).toEqual([{ id: 'm', reasoningEfforts: false }])
   })
 
 })
