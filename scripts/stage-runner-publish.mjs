@@ -39,9 +39,17 @@ const PACKAGES = [
   { dir: 'packages/boot/app-boot', name: '@mrians21/dsh-app-boot', version: '0.1.0-rc.9' },
   { dir: 'packages/runner/llm-remote', name: '@mrians21/dsh-llm-remote', version: '0.1.0-rc.9' },
   { dir: 'packages/auth/auth-simple', name: '@mrians21/dsh-auth-simple', version: '0.1.0-rc.9' },
-  { dir: 'packages/client/connection', name: '@mrians21/dsh-client-connection', version: '0.1.0-rc.9' },
-  { dir: 'packages/runner/runner-hub', name: '@mrians21/dsh-runner-hub', version: '0.1.0-rc.9' },
-  { dir: 'packages/runner/runner', name: '@mrians21/dsh-runner', version: '0.1.0-rc.9' },
+  // client-connection, runner-hub, runner bump to rc.10: their lib/ changed after
+  // merging upstream (111 commits touched their @deepseek-ai dependencies), and
+  // rc.9 is already taken on the registry by the pre-merge build.
+  { dir: 'packages/client/connection', name: '@mrians21/dsh-client-connection', version: '0.1.0-rc.10' },
+  { dir: 'packages/runner/runner-hub', name: '@mrians21/dsh-runner-hub', version: '0.1.0-rc.10' },
+  // runner bumps again to rc.11: its peerDependencies crash npm arborist on
+  // global installs ("Cannot read properties of null (reading 'children')" in
+  // place-dep.js) whenever two or more peer groups combine — reproduced on npm
+  // 11.6.2 and 12.0.2. flattenPeers moves them into dependencies (verified
+  // working), so `npm i -g @mrians21/dsh-runner` resolves out of the box.
+  { dir: 'packages/runner/runner', name: '@mrians21/dsh-runner', version: '0.1.0-rc.11', flattenPeers: true },
 ]
 
 // Published ranges for the @deepseek-ai deps the staged packages reference.
@@ -93,10 +101,16 @@ const PUBLISHED = {
   '@mrians21/dsh-app-boot': '^0.1.0-rc.9',
   '@mrians21/dsh-llm-remote': '^0.1.0-rc.9',
   '@mrians21/dsh-auth-simple': '^0.1.0-rc.9',
-  '@mrians21/dsh-client-connection': '^0.1.0-rc.9',
-  '@mrians21/dsh-runner-hub': '^0.1.0-rc.9',
-  '@mrians21/dsh-runner': '^0.1.0-rc.9',
+  '@mrians21/dsh-client-connection': '^0.1.0-rc.10',
+  '@mrians21/dsh-runner-hub': '^0.1.0-rc.10',
+  '@mrians21/dsh-runner': '^0.1.0-rc.11',
 }
+
+// Runner packages whose peerDependencies must be flattened into dependencies in
+// the published manifest (keyed by dir). See the runner entry above for why.
+const FLATTEN_PEERS = new Set(
+  PACKAGES.filter((pkg) => pkg.flattenPeers).map((pkg) => pkg.dir),
+)
 
 // The packages renamed @deepseek-ai -> @mrians21 in manifests + JS.
 // app-boot is included because the published runner imports runProfile from it,
@@ -176,6 +190,12 @@ function rewriteManifest(pkg) {
       next[renamedDep] = spec
     }
     manifest[section] = next
+  }
+  // Flatten peerDependencies into dependencies for the flagged packages, so a
+  // plain `npm i -g` (which auto-installs peers) cannot trip the arborist bug.
+  if (FLATTEN_PEERS.has(pkg.dir) && manifest.peerDependencies) {
+    manifest.dependencies = { ...manifest.peerDependencies, ...manifest.dependencies }
+    delete manifest.peerDependencies
   }
   // Remove `./src/*` from files if present (not shipped).
   writeFileSync(join(staging, pkg.dir, 'package.json'), JSON.stringify(manifest, null, 2) + '\n')
