@@ -31,7 +31,7 @@ export interface AcpConfig {
 
 依赖：`Stream`（`@agentclientprotocol/sdk`）
 
-来源：[`packages/acp/acp/src/index.ts:70`](../packages/acp/acp/src/index.ts)
+来源：[`packages/acp/acp/src/index.ts:71`](../packages/acp/acp/src/index.ts)
 
 <a id="deepseek-aidsh-acp-demo"></a>
 
@@ -341,6 +341,35 @@ export interface Config {
 ```
 
 来源：[`packages/attachment/attachment-local/src/index.ts:24`](../packages/attachment/attachment-local/src/index.ts)
+
+<a id="deepseek-aidsh-auth-simple"></a>
+
+## `@deepseek-ai/dsh-auth-simple`
+
+需要：`webServer` · `connection`
+
+```ts config-catalog
+interface SchemaResolvedConfig extends Config {
+  /** Session lifetime in milliseconds (resolved from the schema default when omitted). */
+  sessionTtlMs: number
+  /** Cookie name carrying the session token (resolved from the schema default when omitted). */
+  cookieName: string
+}
+
+/** Plugin configuration: PostgreSQL connection, session signing, and cookie name. */
+export interface Config {
+  /** PostgreSQL connection string (libpq format). */
+  connectionString: string
+  /** HMAC secret for signing session tokens. Must be at least 32 bytes. */
+  sessionSecret: string
+  /** Session lifetime in milliseconds. Defaults to 24 hours. */
+  sessionTtlMs?: number
+  /** Cookie name carrying the session token. Defaults to `dsh_session`. */
+  cookieName?: string
+}
+```
+
+来源：[`packages/auth/auth-simple/src/index.ts:57`](../packages/auth/auth-simple/src/index.ts)
 
 <a id="deepseek-aidsh-bash-local"></a>
 
@@ -861,7 +890,7 @@ export interface Config {
   /** Deployment thinking policy; `disabled` limits every conversation request to `off`. */
   thinking?: 'enabled' | 'disabled'
   /** Default thinking effort (default `high`); `off` disables thinking per request. */
-  reasoningEffort?: 'off' | 'high' | 'max'
+  reasoningEffort?: 'off' | 'low' | 'high' | 'max'
   /** Default per-request output cap (default 256,000); a model's own cap and explicit request values win. */
   maxTokens?: number
   /** Positive context capacity used when the selected model has no exact value (default 1,000,000). */
@@ -1082,6 +1111,22 @@ type WithheldThinkingFormat = 'chat-template' | 'qwen-chat-template'
 依赖：`Api`（`@earendil-works/pi-ai`）· `CacheRetention`（`@earendil-works/pi-ai`）· `Model`（`@earendil-works/pi-ai`）· `ModelThinkingLevel`（`@earendil-works/pi-ai`）· `OpenAICompletionsCompat`（`@earendil-works/pi-ai`）· [`RetryPolicyConfig`](../packages/llm/llm/src/index.ts) · `ThinkingBudgets`（`@earendil-works/pi-ai`）· `Transport`（`@earendil-works/pi-ai`）
 
 来源：[`packages/llm/llm-pi-ai/src/config.ts:172`](../packages/llm/llm-pi-ai/src/config.ts)
+
+<a id="deepseek-aidsh-llm-remote"></a>
+
+## `@deepseek-ai/dsh-llm-remote`
+
+需要：`llm`
+
+```ts config-catalog
+/** Configuration for the remote LLM adapter. */
+export interface Config {
+  /** Provider route(s) this adapter claims (must match the server's catalog). */
+  providers: string[]
+}
+```
+
+来源：[`packages/runner/llm-remote/src/index.ts:31`](../packages/runner/llm-remote/src/index.ts)
 
 <a id="deepseek-aidsh-llm-replay"></a>
 
@@ -1462,6 +1507,46 @@ export interface Config {
 ```
 
 来源：[`packages/guard/repeat-tool-reminder/src/index.ts:28`](../packages/guard/repeat-tool-reminder/src/index.ts)
+
+<a id="deepseek-aidsh-runner-hub"></a>
+
+## `@deepseek-ai/dsh-runner-hub`
+
+需要：`webServer` · `authSimple` · `llm`
+
+```ts config-catalog
+/** Plugin configuration: the deployment's trusted serving authorities and synced MCP inventory. */
+export interface Config {
+  /** Authorities this deployment serves beyond loopback (mirrors ConnectionConfig.trustedHosts). */
+  trustedHosts?: string[]
+  /** MCP server configs the hub pushes to laptops so they spawn the servers locally. */
+  mcpServers?: SyncedMcpServer[]
+}
+
+/**
+ * A server-synced MCP server config — plain data mirroring `dsh-mcp-client`'s
+ * `StdioConfig`/`StreamableHttpConfig`. The laptop mounts each via a scoped
+ * `apply(ctx, config)` so the server process spawns LOCALLY on the laptop.
+ */
+export interface SyncedMcpServer {
+  /** Transport kind — only `stdio` is synced (the laptop spawns the server locally). */
+  readonly transport: 'stdio'
+  /** Unique namespace, ^[A-Za-z0-9_-]{1,32}$, namespacing `mcp__<server>__<tool>`. */
+  readonly serverName: string
+  /** Executable to spawn on the laptop. */
+  readonly command: string
+  /** Arguments, verbatim. */
+  readonly args?: readonly string[]
+  /** Per-server environment merged over the scrubbed ambient env. */
+  readonly env?: Readonly<Record<string, string>>
+  /** Working directory for the spawned server. */
+  readonly cwd?: string
+  /** Per-tool-call timeout in milliseconds (optional; the mcp-client default applies when omitted). */
+  readonly toolCallTimeoutMs?: number
+}
+```
+
+来源：[`packages/runner/runner-hub/src/index.ts:51`](../packages/runner/runner-hub/src/index.ts)
 
 <a id="deepseek-aidsh-sandbox-local"></a>
 
@@ -2372,7 +2457,7 @@ export interface Config {
 }
 ```
 
-来源：[`packages/shell/tool-bash-persistent/src/index.ts:405`](../packages/shell/tool-bash-persistent/src/index.ts)
+来源：[`packages/shell/tool-bash-persistent/src/index.ts:400`](../packages/shell/tool-bash-persistent/src/index.ts)
 
 <a id="deepseek-aidsh-tool-fs"></a>
 
@@ -3034,6 +3119,7 @@ export interface Config {
 - `@deepseek-ai/dsh-client-modules` — 需要 `webServer` · `loader`（[`packages/client/modules/src/index.ts`](../packages/client/modules/src/index.ts)）
 - `@deepseek-ai/dsh-client-runtime`（[`packages/client/runtime/src/index.ts`](../packages/client/runtime/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-agent-preset`（[`packages/client/ui-agent-preset/src/index.ts`](../packages/client/ui-agent-preset/src/index.ts)）
+- `@deepseek-ai/dsh-client-ui-auth-login`（[`packages/client/ui-auth-login/src/index.ts`](../packages/client/ui-auth-login/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-commands`（[`packages/client/ui-commands/src/index.ts`](../packages/client/ui-commands/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-conversation`（[`packages/client/ui-conversation/src/index.ts`](../packages/client/ui-conversation/src/index.ts)）
 - `@deepseek-ai/dsh-client-ui-cordis`（[`packages/extensions/ui-cordis/src/index.ts`](../packages/extensions/ui-cordis/src/index.ts)）
@@ -3075,6 +3161,7 @@ export interface Config {
 - `@deepseek-ai/dsh-host-plugin-inventory` — 需要 `loader`（[`packages/host/plugin-inventory/src/index.ts`](../packages/host/plugin-inventory/src/index.ts)）
 - `@deepseek-ai/dsh-llm`（[`packages/llm/llm/src/index.ts`](../packages/llm/llm/src/index.ts)）
 - `@deepseek-ai/dsh-lsp`（[`packages/lsp/lsp/src/index.ts`](../packages/lsp/lsp/src/index.ts)）
+- `@deepseek-ai/dsh-runner` — 需要 `agentDefaultModel` · `agents` · `sessions` · `RUNNER_STARTUP_SERVICE`（[`packages/runner/runner/src/index.ts`](../packages/runner/runner/src/index.ts)）
 - `@deepseek-ai/dsh-schedule` — 需要 `agents` · `sessions` · `tools` · `sessionPersistence`（[`packages/schedule/schedule/src/index.ts`](../packages/schedule/schedule/src/index.ts)）
 - `@deepseek-ai/dsh-session`（[`packages/core/session/src/index.ts`](../packages/core/session/src/index.ts)）
 - `@deepseek-ai/dsh-session-checkpoint-policy` — 需要 `llm` · `sessionPersistence` · `sessions` · `tools`（[`packages/session/session-checkpoint-policy/src/index.ts`](../packages/session/session-checkpoint-policy/src/index.ts)）
