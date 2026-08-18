@@ -1,4 +1,4 @@
-CLAUDE.local.md
+﻿CLAUDE.local.md
 .env
 node_modules/
 lib/
@@ -38,3 +38,18 @@ apps/web/dist/
 worktrees/
 .agents/worktrees/
 .typert-*/
+
+# Scratch probes and one-off check scripts
+.scratch/
+apps/web/mobile-check.mjs
+/C*tmpprobe-laptop.mjs
+
+# Compiler output that leaked next to sources (misdirected tsc/tsdown emit)
+packages/*/*/src/**/*.js
+packages/*/*/src/**/*.d.ts
+packages/*/*/src/**/*.js.map
+packages/*/*/src/**/*.d.ts.map
+vendor/*/src/**/*.js
+vendor/*/src/**/*.d.ts
+vendor/*/src/**/*.js.map
+vendor/*/src/**/*.d.ts.map
