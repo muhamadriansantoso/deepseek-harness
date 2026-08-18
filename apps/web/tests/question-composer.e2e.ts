@@ -132,6 +132,37 @@ describe('web e2e: resident question composer round trip', () => {
       await page.setViewportSize(original)
     }
 
+    // Mobile footer: on a phone width the pager, feedback, and action buttons
+    // share one unwrapped flex row inside the card, whose clip (overflow:
+    // hidden) hides whatever overflows it. The English action copy makes the
+    // row its widest — without the footer wrapping, the rightmost Submit
+    // button is pushed out of the clip and the question becomes unanswerable.
+    // Measured on the live composer at a phone width, then restored. (The
+    // validation-feedback case needs a multi-question batch — this fixture is
+    // one question, where Submit stays disabled until answered.)
+    if (MODE !== 'record') {
+      const original = page.viewportSize() ?? { width: 1680, height: 1000 }
+      await page.setViewportSize({ width: 375, height: 700 })
+      const clipped = await composer.evaluate((card) => {
+        const box = card.getBoundingClientRect()
+        return [...card.querySelectorAll<HTMLElement>('footer button')].map((button) => {
+          const b = button.getBoundingClientRect()
+          return {
+            name: button.textContent?.trim(),
+            // The card's clip is its border box; a fully visible button stays
+            // inside it (sub-pixel tolerance for fractional layout).
+            inside: b.left >= box.left - 0.6 && b.right <= box.right + 0.6
+              && b.top >= box.top - 0.6 && b.bottom <= box.bottom + 0.6,
+          }
+        })
+      })
+      const names = clipped.map(entry => entry.name)
+      expect(names).toContain('Submit')
+      expect(names).toContain('Skip this question')
+      expect(clipped.every(entry => entry.inside)).toBe(true)
+      await page.setViewportSize(original)
+    }
+
     const blue = composer.getByRole('checkbox', { name: 'Blue' })
     await blue.click()
     const custom = composer.getByRole('textbox')

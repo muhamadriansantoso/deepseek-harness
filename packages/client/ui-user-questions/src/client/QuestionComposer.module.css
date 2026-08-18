@@ -412,12 +412,24 @@
   }
 
   .footer {
+    /* One unwrapped row overflows the card's clip (overflow: hidden) on
+       narrow viewports — pager + feedback + actions exceed the card width
+       once validation copy appears, hiding the rightmost Submit button.
+       Wrapping keeps every action visible: the feedback shrinks (min-width
+       0) and the actions row drops to its own line, right-aligned via the
+       auto margin (justify-content only spaces the current line's items). */
+    flex-wrap: wrap;
     align-items: flex-end;
     padding: 0 10px;
   }
 
+  .feedback {
+    min-width: 0;
+  }
+
   .footerActions {
     flex-shrink: 0;
+    margin-left: auto;
   }
 }
 
