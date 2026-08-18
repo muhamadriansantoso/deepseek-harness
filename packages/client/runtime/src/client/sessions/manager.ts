@@ -882,13 +882,16 @@ export class SessionManager {
    * drop generation-scoped live state. Interactions resolved while disconnected
    * send no frame, so stale statuses and buffered answerable frames must not
    * survive into the next generation — mux-open replay re-adds every still-pending
-   * request with its live rpcId.
+   * request with its live rpcId. Per-instance pending waits clear through
+   * each Session's own handleDisconnected so the replay re-mints fresh,
+   * answerable waits.
   */
   handleDisconnected(): void {
     if (this.pendingInteractions.size > 0) {
       this.pendingInteractions.clear()
       this.notifier.markDirty()
     }
+    for (const session of this.sessions.values()) session.handleDisconnected()
     for (const [sessionId, buffer] of [...this.pendingBuffers]) {
       const kept = buffer.filter(item =>
         item.payload.type !== 'approval/requested' && item.payload.type !== 'question/requested')

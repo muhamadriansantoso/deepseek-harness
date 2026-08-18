@@ -917,16 +917,21 @@ describe('remaining branches', () => {
 })
 
 describe('resync', () => {
-  it('rebuilds the window and clears pending; cold instances no-op', async () => {
+  it('rebuilds the window and keeps still-pending waits; cold instances no-op', async () => {
     const { api, session } = makeSession()
     api.onHistory = () => histResponse(plainTurn(0, 0, 'a', 'b'))
     await session.open()
     session.handleMuxEnvelope('ra' as never, { type: 'approval/requested', sessionId: SID, approvalId: 'ap1' as never, toolName: 'rm' })
+    const before = session.getSnapshot().pending
     api.onHistory = () => histResponse([...plainTurn(0, 0, 'a', 'b'), ...plainTurn(6, 1, 'c', 'd')])
     await session.resync()
     const snapshot = session.getSnapshot()
     expect(snapshot.openState).toBe('open')
-    expect(snapshot.pending).toEqual([]) // baseline replay re-sends still-pending frames
+    // Still-pending waits survive the window rebuild: waits are
+    // generation-scoped (dropped at handleDisconnected, before the replay),
+    // and resync runs behind the replayed baseline — wiping here would lose
+    // the question the replay just re-minted.
+    expect(snapshot.pending).toBe(before)
     expect(snapshot.nodes).toHaveLength(4)
 
     const cold = makeSession()
@@ -934,13 +939,18 @@ describe('resync', () => {
     expect(cold.api.calls).toEqual([]) // never opened: no traffic
   })
 
-  it('re-mints a replayed requested frame as a fresh wait with the same key (old reference superseded)', async () => {
+  it('drops waits at generation death; the mux-open replay re-mints them and the resync behind onConnected keeps them', async () => {
     const { api, session } = makeSession()
     api.onHistory = () => histResponse(plainTurn(0, 0, 'a', 'b'))
     await session.open()
     session.handleMuxEnvelope('rq-replay' as never, { type: 'question/requested', sessionId: SID, questions: [] })
     const before = session.getSnapshot().pending[0]!
-    await session.resync()
+    // Generation death clears (resolved-while-disconnected questions send no
+    // replay frame)…
+    session.handleDisconnected()
+    expect(session.getSnapshot().pending).toEqual([])
+    // …and the new mux generation replays still-pending requested frames
+    // verbatim (same rpcId), re-minting fresh waits.
     session.handleMuxEnvelope('rq-replay' as never, { type: 'question/requested', sessionId: SID, questions: [] })
     const after = session.getSnapshot().pending[0]!
     expect(after).not.toBe(before)
@@ -948,6 +958,10 @@ describe('resync', () => {
     // Superseded ≠ settled: an in-flight respond on the stale reference still reaches the host.
     await before.respond({ ok: false, error: { code: 'internal', message: 'x', details: {} } })
     expect(api.callsOf('respond')).toMatchObject([{ rpcId: 'rq-replay' }])
+    // The resync that follows onConnected must not wipe the re-minted wait.
+    api.onHistory = () => histResponse(plainTurn(0, 0, 'a', 'b'))
+    await session.resync()
+    expect(session.getSnapshot().pending[0]).toBe(after)
   })
 
   it('drops a stale in-flight open superseded by resync (generation guard)', async () => {

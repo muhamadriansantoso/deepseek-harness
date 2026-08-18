@@ -409,10 +409,36 @@ export class Session implements SessionFace {
     }
   }
 
+  /**
+   * Connection generation death (manager calls this from onStateChange
+   * 'reconnecting', before the new generation's stream opens and replays):
+   * drop generation-scoped pending waits. A dead generation's waits cannot be
+   * answered, and the host replays still-pending requested frames on the new
+   * generation's mux-open with the same rpcId, so clearing here (before any
+   * replay arrives) lets the replay re-mint fresh waits. Stale references are
+   * superseded, not settled — a dropped wait's respond() still reaches the host.
+   *
+   * This mirrors the manager's own disconnect sweep (pendingInteractions) and
+   * must run BEFORE any next-generation frame: the new stream opens and pushes
+   * replayed baselines ahead of the onConnected readiness handshake, so a
+   * later resync-time clear would wipe the waits the replay just re-minted.
+   */
+  handleDisconnected(): void {
+    if (this.pending.size === 0) return
+    this.pending.clear()
+    this.pendingRev++
+    this.notifier.markDirty()
+  }
+
   /** Reconnect rebuild (manager calls this on onConnected for instances that were opened):
-   *  reset the window and rerun open; pending waits for the baseline replay. Invalidates any
-   *  in-flight open first — its history request rode the dead connection and must not settle
-   *  the fresh generation into 'error'. */
+   *  reset the window and rerun open. Pending waits are NOT cleared here: they
+   *  are generation-scoped (cleared at disconnect by handleDisconnected) and
+   *  re-minted by the mux-open baseline replay, which lands before onConnected
+   *  fires (stream open precedes the readiness handshake). Clearing here would
+   *  wipe waits the replay just re-minted, leaving a pending question stuck at
+   *  'waiting' with no carrier the user can answer. Invalidates any in-flight
+   *  open first — its history request rode the dead connection and must not
+   *  settle the fresh generation into 'error'. */
   async resync(): Promise<void> {
     // The queue mirror is NOT cleared here: onConnected (which drives resync)
     // races the mux frames — the fresh generation's baseline may have landed
@@ -427,10 +453,6 @@ export class Session implements SessionFace {
     this.events = []
     this.views = []
     this.baseSeq = 0
-    // Superseded, not settled: the baseline replay re-sends still-pending requested frames verbatim
-    // (same rpcId), re-minting fresh waits; a stale reference's respond() still reaches the host.
-    this.pending.clear()
-    this.pendingRev++
     this.subscribedLastSeq = null
     this.liveBuffer = []
     this.notifier.markDirty()

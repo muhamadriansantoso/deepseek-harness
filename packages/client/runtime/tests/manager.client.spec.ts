@@ -1012,6 +1012,22 @@ describe('pending-interaction list status', () => {
     expect(manager.getListSnapshot().items[0]?.pendingInteraction).toBe('approval')
   })
 
+  it("generation death sweeps resident sessions' pending waits ahead of the replay", () => {
+    const manager = new SessionManager(new FakeApiClient(), fakeRemote())
+    manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
+    const session = manager.get(S1)
+    manager.handleMuxEnvelope({ rpcId: 'ra' as never, payload: { type: 'approval/requested', sessionId: S1, approvalId: 'ap1' as never, toolName: 'rm' } })
+    expect(session.getSnapshot().pending).toHaveLength(1)
+    // Same sweep as pendingInteractions: stale waits die with the generation…
+    manager.handleDisconnected()
+    expect(session.getSnapshot().pending).toEqual([])
+    // …and a replayed frame arriving before onConnected re-mints the wait,
+    // which the resync behind the handshake keeps (a resync-time clear would
+    // race the replay and strand the pending question without a carrier).
+    manager.handleMuxEnvelope({ rpcId: 'ra' as never, payload: { type: 'approval/requested', sessionId: S1, approvalId: 'ap1' as never, toolName: 'rm' } })
+    expect(session.getSnapshot().pending).toHaveLength(1)
+  })
+
   it('generation death drops buffered answerable frames (a dead generation cannot be answered)', () => {
     const manager = new SessionManager(new FakeApiClient(), fakeRemote())
     manager.handleHostEnvelope({ rpcId: 'h1' as never, payload: { type: 'host/session-added', sessionId: S1, blank: false } })
