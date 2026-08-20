@@ -1359,6 +1359,7 @@ export function WorkspaceBrowser({
         closeLabel={t('close')}
         title={t('defaultSkill.title')}
         description={t('defaultSkill.description')}
+        className={css.defaultSkillDialog as string}
         footer={(
           <>
             <Button variant="outline" disabled={defaultSkillBusy} onClick={closeDefaultSkill}>{t('cancel')}</Button>

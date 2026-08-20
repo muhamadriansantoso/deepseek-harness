@@ -482,7 +482,12 @@
 }
 
 /* Default skills checkbox list (replaces the single <select> that was
-   unreadable on dark theme). */
+   unreadable on dark theme). The dialog overrides the shared Modal's
+   380px card width — skill names + descriptions need a wider column. */
+.defaultSkillDialog {
+  width: min(560px, 100%);
+}
+
 .defaultSkillList {
   display: flex;
   flex-direction: column;
