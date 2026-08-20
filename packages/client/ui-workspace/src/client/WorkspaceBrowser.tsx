@@ -998,14 +998,15 @@ export function WorkspaceBrowser({
     setDefaultSkillDraft(existing?.defaultSkills ?? [])
     setDefaultSkillError(null)
   }
-  // The picker needs a session whose cwd is the workspace's project root (the
-  // host resolves the skill catalog through the session header). Prefer a
-  // session accounted by the target workspace, falling back to the current
-  // session — user-level skill roots are present in both.
+  // The picker needs an attached session to resolve the skill catalog (the host
+  // serves skill.list only for in-memory sessions). Prefer the current session —
+  // it is always attached, and user-level skill roots are consistent across
+  // workspaces. Fall back to the first workspace session only when no session
+  // is currently open (that row may be cold and fail to resolve; the error
+  // surface then tells the user to open a session first).
   const defaultSkillSessionId = useMemo(() => {
     if (defaultSkillTarget === null) return undefined
-    const workspace = workspaces.find(w => w.workspaceId === defaultSkillTarget.workspaceId)
-    return workspace?.sessionIds[0] ?? currentSessionId
+    return currentSessionId ?? workspaces.find(w => w.workspaceId === defaultSkillTarget.workspaceId)?.sessionIds[0]
   }, [defaultSkillTarget, workspaces, currentSessionId])
   const closeDefaultSkill = () => {
     if (defaultSkillBusy) return

@@ -3616,13 +3616,24 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
       // the view scope is the live agent or the preset's standing key.
       async list(request) {
         const { sessionId } = request.payload
-        const session = ctx.sessions.get(sessionId)
-        if (session === undefined) {
-          return err(request, {
-            code: 'session-not-found',
-            message: `session "${sessionId}" not found (not attached)`,
-            details: { sessionId },
-          })
+        // The session may be cold (not in memory) — inspect it from storage,
+        // following the same pattern as historySourceFor. Skill lookup never
+        // creates or resumes an agent.
+        const attached = ctx.sessions.get(sessionId)
+        let session: PresetBearingSession
+        if (attached !== undefined) {
+          session = { header: attached.header, events: attached.events }
+        } else {
+          try {
+            const inspected = await inspectServable(sessionId)
+            session = { header: inspected.meta, events: inspected.events }
+          } catch {
+            return err(request, {
+              code: 'session-not-found',
+              message: `session "${sessionId}" not found`,
+              details: { sessionId },
+            })
+          }
         }
         if (session.header.cwd === undefined) {
           // Every served session records its project at create time; a
