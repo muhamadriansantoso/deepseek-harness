@@ -232,6 +232,25 @@ export class WorkspaceManager {
   }
 
   /**
+   * Replaces a Workspace's default skill set (an empty array clears), then
+   * publish the returned snapshot without waiting for the changed frame.
+   * @param workspaceId - target workspace.
+   * @param defaultSkills - skill names to auto-load, in order; `[]` clears.
+   * @returns the wire result.
+   */
+  async setDefaultSkills(
+    workspaceId: WorkspaceId,
+    defaultSkills: readonly string[],
+  ): Promise<RpcResult<{ workspace: WorkspaceView }>> {
+    const { result } = await this.api.workspace.setDefaultSkills({
+      workspaceId,
+      defaultSkills: [...defaultSkills],
+    })
+    if (result.ok) this.upsert(result.value.workspace)
+    return result
+  }
+
+  /**
    * Host-frame entry. Non-workspace frames are ignored so the runtime can
    * fan one host stream out to both object managers.
    * @param envelope - host stream envelope.

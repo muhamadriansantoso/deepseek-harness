@@ -17,7 +17,7 @@ import WorkspaceRegistry, {
 } from '../src/index.ts'
 import type { WorkspaceDomainState, WorkspaceRecord } from '../src/index.ts'
 
-const DOMAIN_VERSION = 2
+const DOMAIN_VERSION = 4
 
 const header = (id: string, cwd?: string, createdAt = 0): SessionHeader => ({
   version: 0,
@@ -136,6 +136,7 @@ function record(path: string, sessionIds: string[], createdAt = '2026-07-24T00:0
     sessionIds: sessionIds.map(SessionId),
     createdAt,
     updatedAt: createdAt,
+    defaultSkills: [],
   }
 }
 

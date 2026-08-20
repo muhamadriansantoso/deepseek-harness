@@ -27,6 +27,7 @@ import {
   workspaceInsertSessionBeforeRequestSchema, workspaceInsertSessionBeforeValueSchema,
   workspaceListRequestSchema, workspaceListValueSchema,
   workspaceRenameRequestSchema, workspaceRenameValueSchema, workspaceViewSchema,
+  workspaceSetDefaultSkillsRequestSchema, workspaceSetDefaultSkillsValueSchema,
 } from '../src/api/workspace.schema.ts'
 import { skillEntrySchema, skillListRequestSchema, skillListValueSchema } from '../src/api/skills.schema.ts'
 import {
@@ -348,6 +349,7 @@ describe('workspace domain schemas', () => {
   const view = {
     workspaceId: 'w1', path: '/p', title: 'p', sessionIds: ['s1'],
     createdAt: '2026-07-25T00:00:00.000Z', updatedAt: '2026-07-25T00:00:00.000Z',
+    defaultSkills: [],
   }
 
   it('validates ids, the view row, and list request/value', () => {
@@ -405,6 +407,19 @@ describe('workspace domain schemas', () => {
     expect(() => workspaceInsertBeforeRequestSchema.parse({ beforeWorkspaceId: 'w2' })).toThrow()
     expect(workspaceInsertBeforeValueSchema.parse({ workspaceIds: ['w2', 'w1'] }).workspaceIds)
       .toEqual(['w2', 'w1'])
+  })
+
+  it('validates workspaceView with and without defaultSkills', () => {
+    expect(workspaceViewSchema.parse(view).defaultSkills).toEqual([])
+    expect(workspaceViewSchema.parse({ ...view, defaultSkills: ['a', 'b'] }).defaultSkills).toEqual(['a', 'b'])
+  })
+
+  it('setDefaultSkills request/value carry the skill array', () => {
+    // The array is required on the wire: an omitted payload fails.
+    expect(() => workspaceSetDefaultSkillsRequestSchema.parse({ workspaceId: 'w1' })).toThrow()
+    expect(workspaceSetDefaultSkillsRequestSchema.parse({ workspaceId: 'w1', defaultSkills: [] }).defaultSkills).toEqual([])
+    expect(workspaceSetDefaultSkillsRequestSchema.parse({ workspaceId: 'w1', defaultSkills: ['s'] }).defaultSkills).toEqual(['s'])
+    expect(workspaceSetDefaultSkillsValueSchema.parse({ workspace: view }).workspace.workspaceId).toBe('w1')
   })
 })
 
@@ -519,7 +534,7 @@ describe('events frame schemas', () => {
       { type: 'host/agent-error', sessionId: 's', message: 'boom' },
       { type: 'host/workspace-changed', workspace: {
         workspaceId: 'w', path: '/w', title: 'w', sessionIds: [],
-        createdAt: '0', updatedAt: '0',
+        createdAt: '0', updatedAt: '0', defaultSkills: [],
       } },
       { type: 'host/workspace-removed', workspaceId: 'w' },
       { type: 'host/remote-event', event: 'commands/change', args: [] },

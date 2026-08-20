@@ -10,6 +10,7 @@
  */
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
+import type { ConnectionHandle } from '@deepseek-ai/dsh-api-remotes/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from './contract/slots.ts'
@@ -91,6 +92,13 @@ export function apply(ctx: ClientContext): void {
     },
     renameWorkspace: async (workspaceId, title) => { await ctx.workspaces.rename(workspaceId, title) },
     deleteWorkspace: async (workspaceId) => { await ctx.workspaces.delete(workspaceId) },
+    fetchSkills: async (sessionId) => {
+      const connection = ctx.get('connection') as ConnectionHandle
+      const { result } = await connection.api.skills.list({ sessionId })
+      if (!result.ok) throw new Error(result.error.message)
+      return result.value.skills
+    },
+    setDefaultSkills: async (workspaceId, defaultSkills) => ctx.workspaces.setDefaultSkills(workspaceId, defaultSkills),
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await ctx.workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },

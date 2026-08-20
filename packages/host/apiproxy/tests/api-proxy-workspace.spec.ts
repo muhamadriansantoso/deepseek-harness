@@ -567,4 +567,55 @@ describe('Host Workspace increments', () => {
     })
     abort.abort()
   })
+
+  it('sets and clears workspace default skills, streaming the changed view once', async () => {
+    const { api, root } = await harness()
+    const workspace = expectOk(await api.workspace.create(request({ path: stageDir(root, 'default-skill-home') }))).workspace
+    expect(workspace.defaultSkills).toEqual([])
+
+    const abort = new AbortController()
+    const stream: AsyncIterator<RpcRequest<HostFrame>> =
+      api.events.host(request({}), abort.signal)[Symbol.asyncIterator]()
+    const changed = nextHostFrame(stream)
+    const set = expectOk(await api.workspace.setDefaultSkills(
+      request({ workspaceId: workspace.workspaceId, defaultSkills: ['code-review'] }),
+    )).workspace
+    expect(set.defaultSkills).toEqual(['code-review'])
+    expect(await changed).toMatchObject({
+      payload: {
+        type: 'host/workspace-changed',
+        workspace: { workspaceId: workspace.workspaceId, defaultSkills: ['code-review'] },
+      },
+    })
+    expect(expectOk(await api.workspace.list(request({}))).items[0]?.defaultSkills).toEqual(['code-review'])
+
+    // Setting multiple skills preserves selection order and streams again.
+    const nextChanged = nextHostFrame(stream)
+    const multi = expectOk(await api.workspace.setDefaultSkills(
+      request({ workspaceId: workspace.workspaceId, defaultSkills: ['code-review', 'commit-helper'] }),
+    )).workspace
+    expect(multi.defaultSkills).toEqual(['code-review', 'commit-helper'])
+    expect(await nextChanged).toMatchObject({
+      payload: {
+        type: 'host/workspace-changed',
+        workspace: { workspaceId: workspace.workspaceId, defaultSkills: ['code-review', 'commit-helper'] },
+      },
+    })
+
+    // Clearing sends an empty array back and the registry reflects the removal.
+    const cleared = expectOk(await api.workspace.setDefaultSkills(
+      request({ workspaceId: workspace.workspaceId, defaultSkills: [] }),
+    )).workspace
+    expect(cleared.defaultSkills).toEqual([])
+    expect(expectOk(await api.workspace.list(request({}))).items[0]?.defaultSkills).toEqual([])
+
+    const missing = await api.workspace.setDefaultSkills(
+      request({ workspaceId: '00000000-0000-4000-8000-000000000099' as WorkspaceId, defaultSkills: ['x'] }),
+    )
+    expect(missing.result).toMatchObject({
+      ok: false,
+      error: { code: 'workspace-not-found' },
+    })
+    abort.abort()
+  })
 })

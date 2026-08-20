@@ -40,6 +40,12 @@ export interface WorkspaceView {
   owner?: string
   /** The runner device backing a remote workspace; absent = server-host directory. */
   remote?: { userId: string; deviceId: string }
+  /**
+   * Skill names auto-loaded into every session in this workspace, in
+   * selection order; `[]` means none. The host injects each skill body
+   * without an explicit `skill` tool call.
+   */
+  defaultSkills: string[]
 }
 
 /** Workspace-domain unary methods (the map keys workspace.* of RpcMethodMap). */
@@ -113,4 +119,14 @@ export interface WorkspaceApi {
    */
   archiveSession(request: RpcRequest<{ sessionId: SessionId }>):
   Promise<RpcResponse<{ archivedSessionIds: SessionId[] }>>
+
+  /**
+   * Replaces the workspace's default skill set. When set, the host auto-loads
+   * each named skill body into every session in this workspace without an
+   * explicit `skill` tool call. An empty `defaultSkills` clears all defaults.
+   * An unknown workspace id fails with `workspace-not-found`. Returns the
+   * updated workspace view.
+   */
+  setDefaultSkills(request: RpcRequest<{ workspaceId: WorkspaceId; defaultSkills: string[] }>):
+  Promise<RpcResponse<{ workspace: WorkspaceView }>>
 }

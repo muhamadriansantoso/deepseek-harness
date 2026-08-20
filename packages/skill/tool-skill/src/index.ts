@@ -11,6 +11,7 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
+import type { WorkspaceRegistry } from '@deepseek-ai/dsh-workspace'
 import {
   escapeText,
   isModelInvocable,
@@ -43,7 +44,23 @@ export interface SkillCatalogSource {
 declare module '@deepseek-ai/dsh-llm' {
   interface MessageSourceMap {
     'skill-catalog': SkillCatalogSource
+    /** Workspace-default skill body injected without an explicit load gesture. */
+    'skill-default': DefaultSkillSource
   }
+}
+
+/**
+ * Durable record of one workspace-default skill injection. The source names
+ * the workspace id and skill name so the log reconstructs the injection;
+ * the body itself is the rendered skill content in the message text.
+ */
+export interface DefaultSkillSource {
+  readonly kind: 'skill-default'
+  readonly form: 'instructions'
+  /** The workspace whose default skill was injected. */
+  readonly workspaceId: string
+  /** The injected skill's name. */
+  readonly name: string
 }
 
 /** Durable entry list mirroring the rendered catalog lines, for non-model consumers. */
@@ -223,7 +240,13 @@ export function apply(ctx: Context, config: Config = {}): void {
       : { skills: [], complete: true }
     signal.throwIfAborted()
     if (!snapshot.complete) return decision
-    const skills = snapshot.skills.filter(isModelInvocable)
+    // The workspace default skills are injected separately (their bodies are
+    // already in the window); listing them here would invite redundant
+    // `skill` tool calls.
+    const defaultSkills = await resolveWorkspaceDefaultSkills(ctx, agent)
+    const excluded = new Set(defaultSkills?.names ?? [])
+    const skills = snapshot.skills.filter(skill =>
+      isModelInvocable(skill) && !excluded.has(skill.name))
     const entries = catalogSourceEntries(skills, catalogDescriptionMaxLength)
     const digest = digestCatalogEntries(entries)
     const history = catalogHistory(agent)
@@ -247,6 +270,53 @@ export function apply(ctx: Context, config: Config = {}): void {
       messages: existing === undefined
         ? [...decision.messages, catalog]
         : decision.messages.map(message => message.id === existing.message.id ? catalog : message),
+    }
+  })
+
+  // Workspace-default skills: a session whose workspace names default skills
+  // gets each skill's rendered body injected as instructions context on every
+  // step where it is not already present. Registered after the catalog
+  // listener so the injections land after the catalog in the waterfall — the
+  // material the model must act on, closest to its answer. The skills are
+  // loaded server-side through the registry (never fetched to the client);
+  // a name that no longer resolves is skipped with a warning rather than
+  // failing the step, and re-injection is suppressed while the visible window
+  // already carries the same (workspace, skill) record.
+  ctx.on('agent/pre-step', async (
+    { agent, signal },
+    next,
+  ): Promise<PreStepDecision> => {
+    const decision = await next()
+    if (decision.kind === 'reject') return decision
+    const defaultSkills = await resolveWorkspaceDefaultSkills(ctx, agent)
+    signal.throwIfAborted()
+    if (defaultSkills === undefined) return decision
+    const lookup = { cwd: agent.session.header.cwd, signal, scope: agent }
+    const injections: UserMessage[] = []
+    for (const name of defaultSkills.names) {
+      signal.throwIfAborted()
+      if (defaultSkillInjected(agent, { workspaceId: defaultSkills.workspaceId, name })) continue
+      const skill = await ctx.skills.get(name, lookup)
+      signal.throwIfAborted()
+      if (skill === undefined || !isModelInvocable(skill)) {
+        ctx.logger.warn(`[tool-skill] workspace default skill "${name}" is unavailable; skipping`)
+        continue
+      }
+      const source: DefaultSkillSource = {
+        kind: 'skill-default',
+        form: 'instructions',
+        workspaceId: defaultSkills.workspaceId,
+        name: skill.name,
+      }
+      injections.push(createUserMessage({
+        content: [{ type: 'text', text: renderSkillContent(skill) }],
+        source,
+      }))
+    }
+    if (injections.length === 0) return decision
+    return {
+      kind: 'enter',
+      messages: [...decision.messages, ...injections],
     }
   })
 }
@@ -428,4 +498,54 @@ function invokedSkillNames(messages: readonly UserMessage[]): string[] {
     }
   }
   return names
+}
+
+/**
+ * Resolve the workspace-default skills for one agent's session, or undefined
+ * when the deployment composes no workspace registry, the session's cwd maps
+ * to no workspace, or the workspace names no default skills.
+ * @param ctx - host context (workspace registry optional).
+ * @param agent - the agent whose session's workspace is asked.
+ * @returns the workspace id and default skill names, or undefined.
+ */
+async function resolveWorkspaceDefaultSkills(
+  ctx: Context,
+  agent: Agent,
+): Promise<{ workspaceId: string; names: string[] } | undefined> {
+  const registry = ctx.get('workspaceRegistry') as WorkspaceRegistry | undefined
+  if (registry === undefined) return undefined
+  const path = registry.canonicalPathForSession(agent.session.id, agent.session.header)
+  if (path === undefined) return undefined
+  for (const workspace of registry.list()) {
+    if (workspace.path !== path) continue
+    const names = workspace.defaultSkills
+    if (names.length === 0) return undefined
+    return { workspaceId: String(workspace.id), names: [...names] }
+  }
+  return undefined
+}
+
+/**
+ * Whether the agent's visible surface already carries the given workspace
+ * default-skill injection. The window is the source of truth: an injected
+ * message visible to the model suppresses a re-injection, while a record
+ * outside the window (compacted away) is re-injected.
+ * @param agent - the agent whose session surface is asked.
+ * @param injection - the (workspace, skill) pair to look for.
+ * @returns whether a matching visible injection exists.
+ */
+function defaultSkillInjected(
+  agent: Agent,
+  injection: { workspaceId: string; name: string },
+): boolean {
+  const visible = new Set(agent.session.surface.nodes)
+  for (const event of agent.session.events) {
+    if (event.type !== 'user/message' || event.data.source.kind !== 'skill-default') continue
+    if (!visible.has(event.seq)) continue
+    const source = event.data.source as DefaultSkillSource
+    if (source.workspaceId === injection.workspaceId && source.name === injection.name) {
+      return true
+    }
+  }
+  return false
 }

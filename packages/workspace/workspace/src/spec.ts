@@ -38,6 +38,8 @@ export const workspaceRecord = z.object({
     deviceId: z.string(),
   }).optional(),
   owner: z.string().optional(),
+  /** Skill names auto-loaded for every session in this workspace, in selection order. */
+  defaultSkills: z.array(z.string()).default([]),
 })
 
 /** One stored workspace record, inferred from {@link workspaceRecord}. */
@@ -80,7 +82,7 @@ export type WorkspaceDomainState = z.infer<typeof workspaceDomainState>
  */
 export const workspaceDomainSpec = defineDomain({
   name: 'workspace',
-  version: 3,
+  version: 4,
   global: {
     schema: workspaceDomainState,
     initial: { initialized: false, workspaceIds: [], archivedSessionIds: [] },

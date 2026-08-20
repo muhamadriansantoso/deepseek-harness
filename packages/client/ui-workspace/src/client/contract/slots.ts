@@ -27,6 +27,7 @@ import type { HostObservable, PropsLocale, PropsRenderSlots, PropsRuntime, Props
 // runtime shares below.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
+import type { SkillEntry } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   SessionId, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -135,6 +136,17 @@ export type WorkspaceBrowserInjected = DirectoryPickingInjected & {
   insertSessionBefore: (workspaceId: WorkspaceId, sessionId: SessionId, beforeSessionId?: SessionId) => Promise<void>
   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+  /**
+   * Fetch the user-invocable skill catalog for a session's project.
+   * Used by the default skill picker dialog.
+   */
+  fetchSkills: (sessionId: SessionId) => Promise<readonly SkillEntry[]>
+  /**
+   * Replaces the workspace's default skill set; an empty array clears all
+   * defaults. When set, the Host auto-loads each skill body into every
+   * session in the workspace without an explicit `skill` tool call.
+   */
+  setDefaultSkills: (workspaceId: WorkspaceId, defaultSkills: readonly string[]) => Promise<WorkspaceView>
 }
 
 /** Full browser props: shell owner share + viewing store + injected actions + the locale seat. */

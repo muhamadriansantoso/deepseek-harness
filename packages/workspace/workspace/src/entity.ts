@@ -133,6 +133,22 @@ export class WorkspaceEntity implements Workspace {
     return this.record.owner
   }
 
+  /**
+   * Skill names auto-loaded for every session in this workspace, in
+   * selection order; an empty array means no defaults.
+   */
+  get defaultSkills(): string[] {
+    return this.record.defaultSkills
+  }
+
+  async setDefaultSkills(names: readonly string[]): Promise<void> {
+    await this.mutate(record =>
+      record.defaultSkills.length === names.length
+      && names.every((name, index) => record.defaultSkills[index] === name)
+        ? record
+        : { ...record, defaultSkills: [...names] })
+  }
+
   async setTitle(title: string): Promise<void> {
     await this.mutate(record => ({ ...record, title }))
   }

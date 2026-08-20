@@ -21,6 +21,11 @@ export const workspaceViewSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   owner: z.string().optional(),
+  remote: z.object({
+    userId: z.string(),
+    deviceId: z.string(),
+  }).optional(),
+  defaultSkills: z.array(z.string()),
 }) satisfies z.ZodType<Wire<WorkspaceView>>
 
 /** workspace.list request payload (empty object literal). */
@@ -99,3 +104,14 @@ export const workspaceArchiveSessionRequestSchema = z.object({
 export const workspaceArchiveSessionValueSchema = z.object({
   archivedSessionIds: z.array(sessionIdSchema),
 }) satisfies z.ZodType<Wire<ResponseValue<'workspace.archiveSession'>>>
+
+/** workspace.setDefaultSkills request payload. */
+export const workspaceSetDefaultSkillsRequestSchema = z.object({
+  workspaceId: workspaceIdSchema,
+  defaultSkills: z.array(z.string()),
+}) satisfies z.ZodType<Wire<RequestPayload<'workspace.setDefaultSkills'>>>
+
+/** workspace.setDefaultSkills response value. */
+export const workspaceSetDefaultSkillsValueSchema = z.object({
+  workspace: workspaceViewSchema,
+}) satisfies z.ZodType<Wire<ResponseValue<'workspace.setDefaultSkills'>>>

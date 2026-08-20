@@ -12,7 +12,7 @@ import type { Agent, ModelSelection, ModelSelectionRef, AgentOptions, AgentStatu
 import type {} from '@deepseek-ai/dsh-agent-presets/types'
 import { AttachmentError } from '@deepseek-ai/dsh-attachment'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
-import { contentHasImage, createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, freezeMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import { errorChain } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageSource } from '@deepseek-ai/dsh-llm'
 import { isAppendSurfaceEvent, isJsonValue } from '@deepseek-ai/dsh-session'
@@ -205,11 +205,6 @@ function imageInEvent(event: SessionEvent, match: (ref: ImageAttachmentRef) => b
     return imageBlockIn([data.chunk.block], match)
   }
   return undefined
-}
-
-/** True when the current model-visible surface contains an image. */
-function messagesHaveImage(messages: readonly { content: readonly ContentBlock[] }[]): boolean {
-  return messages.some(message => contentHasImage(message.content))
 }
 
 /** Resolve the first reference matching one opaque id. */
@@ -1101,6 +1096,7 @@ function workspaceView(workspace: Workspace): WorkspaceView {
     updatedAt: workspace.updatedAt,
     ...workspace.owner === undefined ? {} : { owner: workspace.owner },
     ...workspace.remote === undefined ? {} : { remote: { ...workspace.remote } },
+    defaultSkills: [...workspace.defaultSkills],
   }
 }
 
@@ -1116,6 +1112,7 @@ function changedWorkspaceView(workspaceId: string, value: unknown): WorkspaceVie
     updatedAt: record.updatedAt,
     ...record.owner === undefined ? {} : { owner: record.owner },
     ...record.remote === undefined ? {} : { remote: { ...record.remote } },
+    defaultSkills: [...record.defaultSkills],
   }
 }
 
@@ -1135,7 +1132,19 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const { provider, model } = defaults.defaultModelSelection()
     return { provider, model }
   }
-  type WebModelSelectionRef = ModelSelectionRef & { current: ModelSelection }
+  type WebModelSelectionRef = ModelSelectionRef & {
+    current: ModelSelection
+    /** The user's chosen default, ignoring a one-shot vision override. */
+    readonly preferred: ModelSelection
+    /**
+     * The user-facing selection: an in-process pick, else the session's latest
+     * logged request route, else the live Agent default. The `current` getter
+     * deliberately skips the logged tier so a vision turn's request header can
+     * never make the vision model the room's permanent selection; the picker
+     * needs that tier back for sessions resumed without an in-process pick.
+     */
+    uiCurrent(): ModelSelection
+  }
   const selections = new WeakMap<Agent, WebModelSelectionRef>()
   /**
    * Serializes `agentPreset.select` per session. Two concurrent selects both
@@ -1191,11 +1200,41 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
     const installed = selections.get(agent)
     if (installed !== undefined) return installed
     let picked: ModelSelection | undefined
+    let oneShot = false
+    let override: ModelSelection | undefined
+    const preferredOf = (): ModelSelection => picked ?? defaults.defaultModelSelection()
     const selection: WebModelSelectionRef = {
+      get preferred(): ModelSelection {
+        return preferredOf()
+      },
       get current(): ModelSelection {
+        // A one-shot override (vision auto-switch) is consumed by prompt
+        // assembly, not by the UI selector. Keep it out of `picked` so the
+        // chat-room selector stays on the user's chosen default. Do not fall
+        // back to the logged request header: a vision turn writes that header,
+        // and reading it back would make the vision model the room's permanent
+        // selection.
+        if (override !== undefined) return override
+        return preferredOf()
+      },
+      set current(next: ModelSelection) {
+        if (oneShot) {
+          override = next
+          return
+        }
+        // A user pick (or a non-vision admit restoring the default) replaces
+        // the room selection and drops any leftover vision override.
+        override = undefined
+        picked = next
+      },
+      get oneShot(): boolean { return oneShot },
+      set oneShot(value: boolean) {
+        oneShot = value
+      },
+      uiCurrent(): ModelSelection {
         if (picked !== undefined) return picked
-        // Incrementally folded by the session, so a per-step read costs
-        // O(new events) rather than a rescan.
+        // Incrementally folded by the session, so a per-read costs O(new
+        // events) rather than a rescan.
         const logged = agent.session.requestHeader()?.config
         if (logged === undefined) return defaults.defaultModelSelection()
         return {
@@ -1205,9 +1244,6 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
             ? {}
             : { reasoningEffort: logged.reasoningEffort },
         }
-      },
-      set current(next: ModelSelection) {
-        picked = next
       },
       assembled: undefined,
     }
@@ -2488,7 +2524,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
         const { sessionId } = request.payload
         const found = await agentFor(sessionId)
         if ('error' in found) return err(request, found.error)
-        const current = selectionFor(found.agent).current
+        const current = selectionFor(found.agent).uiCurrent()
         const { groups, failures } = await buildModelCatalog(ctx)
         const routable = routeServed(current.provider)
         return ok(request, { current: { ...current }, routable, groups, failures })
@@ -2507,18 +2543,6 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
                 ? {}
                 : { reasoningEffort: ReasoningEffortId(reasoningEffort) },
             })
-            const pendingImage = [...found.agent.inbox.nextTurn, ...found.agent.inbox.nextStep]
-              .some(message => contentHasImage(message.content))
-            if (pendingImage || messagesHaveImage(found.agent.session.deriveMessages())) {
-              const info = await ctx.llm.resolveModelInfo(resolved.provider, resolved.model)
-              if (info.inputModalities !== undefined && !info.inputModalities.includes('image')) {
-                return err(request, {
-                  code: 'model-unavailable',
-                  message: `Model "${resolved.model}" does not accept image input, but this session already contains images; select an image-capable model.`,
-                  details: { provider, model },
-                })
-              }
-            }
             const selected: ModelSelection = {
               provider: resolved.provider,
               model: resolved.model,
@@ -2716,18 +2740,60 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           rpcId: request.rpcId,
           ...(canonicalTimeZone === undefined ? {} : { clientTimeZone: canonicalTimeZone }),
         }
-        const hasImage = content.some(part => part.type === 'image')
+        // Only a newly attached image triggers the vision override. History
+        // that still contains images from an earlier turn stays on the user's
+        // default model; text-only adapters degrade those blocks to `[image]`.
+        const needsVision = content.some(part => part.type === 'image')
         const admit = async (): Promise<RpcResponse<{ accepted: true }>> => {
           try {
-            if (hasImage) {
-              const current = selectionFor(agent).current
+            const selection = selectionFor(agent)
+            // Pin the user's chosen default as the room selection. This drops a
+            // leftover vision override (text-only admit) and, for a vision
+            // admit, keeps the picker on the default while the one-shot
+            // override rides on top for prompt assembly only.
+            selection.current = selection.preferred
+            if (needsVision) {
+              const current = selection.preferred
               const modelInfo = await ctx.llm.resolveModelInfo(current.provider, current.model)
-              if (modelInfo.inputModalities !== undefined && !modelInfo.inputModalities.includes('image')) {
-                return err(request, {
-                  code: 'attachment-error',
-                  message: `Model "${current.model}" does not support image input.`,
-                  details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
-                })
+              if (modelInfo.inputModalities === undefined || !modelInfo.inputModalities.includes('image')) {
+                const sameProvider = await ctx.llm.listModels(current.provider)
+                const visionSame = sameProvider.find(candidate =>
+                  candidate.inputModalities !== undefined && candidate.inputModalities.includes('image'))
+                let vision = visionSame
+                if (vision === undefined) {
+                  for (const provider of ctx.llm.listProviders()) {
+                    if (provider.id === current.provider) continue
+                    // A provider whose catalog is offline must not fail the
+                    // vision search; skip it like the catalog view does.
+                    let models
+                    try {
+                      models = await ctx.llm.listModels(provider.id)
+                    } catch {
+                      continue
+                    }
+                    const found = models.find(candidate =>
+                      candidate.inputModalities !== undefined && candidate.inputModalities.includes('image'))
+                    if (found !== undefined) {
+                      vision = found
+                      break
+                    }
+                  }
+                }
+                if (vision === undefined) {
+                  return err(request, {
+                    code: 'attachment-error',
+                    message: `Model "${current.model}" does not support image input, and no image-capable model is configured for any provider; add one in Settings → Models.`,
+                    details: { reason: 'MODEL_DOES_NOT_SUPPORT_IMAGES' },
+                  })
+                }
+                selection.oneShot = true
+                selection.current = { provider: vision.provider, model: vision.id }
+                selection.oneShot = false
+                const durable = await durablePromptContent(ctx, content)
+                const message: UserMessage = createUserMessage({ content: durable, source })
+                if (mode === 'steer') agent.steer(message)
+                else agent.followup(message)
+                return ok(request, { accepted: true as const })
               }
             }
             const durable = await durablePromptContent(ctx, content)
@@ -2750,7 +2816,7 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           }
           return ok(request, { accepted: true as const })
         }
-        return hasImage ? serializeImageAdmission(agent, admit) : admit()
+        return needsVision ? serializeImageAdmission(agent, admit) : admit()
       },
 
       async attachment(request) {
@@ -3236,6 +3302,29 @@ export function createApiProxy(ctx: Context, defaults: ApiProxyDefaults): ApiPro
           })
         }
         return ok(request, { archivedSessionIds: [...ctx.workspaceRegistry.archivedSessionIds] })
+      },
+
+      async setDefaultSkills(request) {
+        const { payload } = request
+        const workspace = ctx.workspaceRegistry.get(brandWorkspaceId(payload.workspaceId))
+        if (workspace === undefined) return workspaceNotFound(request, payload.workspaceId)
+        if (workspace.remote === undefined && !canSeeServerWorkspace()) {
+          return workspaceNotFound(request, payload.workspaceId)
+        }
+        const principal = currentPrincipal()
+        if (principal !== undefined && workspace.owner !== undefined && workspace.owner !== principal) {
+          return workspaceNotFound(request, payload.workspaceId)
+        }
+        const defaultSkills = [...new Set(payload.defaultSkills
+          .map(name => name.trim())
+          .filter(name => name !== ''))]
+        await workspace.setDefaultSkills(defaultSkills)
+        // Lazily adopt a legacy (owner-less) record into the first user who
+        // mutates it, mirroring rename's claim-on-mutation semantics.
+        if (principal !== undefined && workspace.owner === undefined) {
+          await workspace.setOwner(principal)
+        }
+        return ok(request, { workspace: workspaceView(workspace) })
       },
     },
 

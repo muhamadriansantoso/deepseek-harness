@@ -15,6 +15,7 @@ import {
   Button, IconCloseFill14, IconPersonalizationOutline16,
   IconProjectAddOutline16, IconSearchOutline16, Menu, Modal, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { SkillEntry } from '@deepseek-ai/dsh-api-remotes/client'
 import type {
   SessionId, SessionListState, SessionSearchResultItem, WorkspaceId, WorkspaceView,
 } from '@deepseek-ai/dsh-client-runtime/client'
@@ -237,6 +238,8 @@ type SessionTreeProps = Pick<
   onRenameRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
   /** Open the browser-owned delete-confirmation dialog for a real Workspace group. */
   onDeleteRequest: (workspaceId: WorkspaceId, currentTitle: string) => void
+  /** Open the browser-owned default-skill dialog for a real Workspace group. */
+  onDefaultSkillRequest: (workspaceId: WorkspaceId) => void
   /** Open the browser-owned session rename dialog. */
   onSessionRename: (sessionId: SessionNode['id'], currentTitle: string) => void
   /** Archive a session (row menu action; the row disappears on the state echo). */
@@ -248,7 +251,7 @@ type SessionTreeProps = Pick<
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
 function SessionTree({
   useSessions, startSession, open, forkSession, workspaces, archivedSessionIds,
-  onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
+  onRenameRequest, onDeleteRequest, onDefaultSkillRequest, onSessionRename, onSessionArchive,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
   sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, t,
@@ -474,6 +477,10 @@ function SessionTree({
                     delete: () => {
                     /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
                       if (group.workspaceId !== undefined) onDeleteRequest(group.workspaceId, group.label)
+                    },
+                    defaultSkill: () => {
+                    /* v8 ignore next -- narrowing guard: the actions object exists only for real-workspace groups. */
+                      if (group.workspaceId !== undefined) onDefaultSkillRequest(group.workspaceId)
                     },
                   }}
               />
@@ -751,6 +758,8 @@ export function WorkspaceBrowser({
   forkSession,
   renameWorkspace,
   deleteWorkspace,
+  fetchSkills,
+  setDefaultSkills,
   insertWorkspaceBefore,
   archiveSession,
   insertSessionBefore,
@@ -972,6 +981,90 @@ export function WorkspaceBrowser({
     })
   }
 
+  // Default-skill dialog: browser-owned so it outlives row unmounts during
+  // collapse. The picker shows the user-invocable catalog resolved through a
+  // session in the target workspace (the skill.list RPC addresses cwd through
+  // the session header, never a raw path).
+  const [defaultSkillTarget, setDefaultSkillTarget] = useState<{ workspaceId: WorkspaceId } | null>(null)
+  const [defaultSkillDraft, setDefaultSkillDraft] = useState<readonly string[]>([])
+  const [defaultSkillOptions, setDefaultSkillOptions] = useState<readonly SkillEntry[]>([])
+  const [defaultSkillLoading, setDefaultSkillLoading] = useState(false)
+  const [defaultSkillError, setDefaultSkillError] = useState<string | null>(null)
+  const [defaultSkillBusy, setDefaultSkillBusy] = useState(false)
+  const currentSessionId = useSessions(state => state.current)
+  const onDefaultSkillRequest = (workspaceId: WorkspaceId) => {
+    const existing = workspaces.find(workspace => workspace.workspaceId === workspaceId)
+    setDefaultSkillTarget({ workspaceId })
+    setDefaultSkillDraft(existing?.defaultSkills ?? [])
+    setDefaultSkillError(null)
+  }
+  // The picker needs a session whose cwd is the workspace's project root (the
+  // host resolves the skill catalog through the session header). Prefer a
+  // session accounted by the target workspace, falling back to the current
+  // session — user-level skill roots are present in both.
+  const defaultSkillSessionId = useMemo(() => {
+    if (defaultSkillTarget === null) return undefined
+    const workspace = workspaces.find(w => w.workspaceId === defaultSkillTarget.workspaceId)
+    return workspace?.sessionIds[0] ?? currentSessionId
+  }, [defaultSkillTarget, workspaces, currentSessionId])
+  const closeDefaultSkill = () => {
+    if (defaultSkillBusy) return
+    setDefaultSkillTarget(null)
+    setDefaultSkillError(null)
+  }
+  const toggleDefaultSkill = (name: string) => {
+    setDefaultSkillDraft(draft =>
+      draft.includes(name) ? draft.filter(n => n !== name) : [...draft, name])
+    setDefaultSkillError(null)
+  }
+  const confirmDefaultSkill = () => {
+    /* v8 ignore next -- the Modal is absent without a target and its button is disabled while busy. */
+    if (defaultSkillBusy || defaultSkillTarget === null) return
+    setDefaultSkillBusy(true)
+    setDefaultSkillError(null)
+    const draft = defaultSkillDraft
+    setDefaultSkills(defaultSkillTarget.workspaceId, draft).then(() => {
+      setDefaultSkillBusy(false)
+      setDefaultSkillTarget(null)
+    }).catch((reason: unknown) => {
+      setDefaultSkillBusy(false)
+      setDefaultSkillError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+  const clearDefaultSkill = () => {
+    if (defaultSkillBusy || defaultSkillTarget === null) return
+    setDefaultSkillBusy(true)
+    setDefaultSkillError(null)
+    setDefaultSkillDraft([])
+    setDefaultSkills(defaultSkillTarget.workspaceId, []).then(() => {
+      setDefaultSkillBusy(false)
+      setDefaultSkillTarget(null)
+    }).catch((reason: unknown) => {
+      setDefaultSkillBusy(false)
+      setDefaultSkillError(reason instanceof Error ? reason.message : String(reason))
+    })
+  }
+  useEffect(() => {
+    if (defaultSkillTarget === null) return
+    if (defaultSkillSessionId === undefined) {
+      setDefaultSkillOptions([])
+      return
+    }
+    const controller = new AbortController()
+    setDefaultSkillLoading(true)
+    fetchSkills(defaultSkillSessionId).then((skills) => {
+      if (controller.signal.aborted) return
+      setDefaultSkillOptions(skills)
+      setDefaultSkillLoading(false)
+    }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return
+      setDefaultSkillOptions([])
+      setDefaultSkillLoading(false)
+      setDefaultSkillError(reason instanceof Error ? reason.message : String(reason))
+    })
+    return () => { controller.abort() }
+  }, [defaultSkillTarget, defaultSkillSessionId, fetchSkills])
+
   return (
     <div className={clsx(css.root, !wide && css.rail)}>
       <div className={css.sectionHeader}>
@@ -1162,6 +1255,9 @@ export function WorkspaceBrowser({
                   setDeleteTarget({ workspaceId, title })
                   setDeleteError(null)
                 }}
+                onDefaultSkillRequest={(workspaceId) => {
+                  onDefaultSkillRequest(workspaceId)
+                }}
               />
             ))}
       </div>
@@ -1256,6 +1352,50 @@ export function WorkspaceBrowser({
       >
         {deleting && <div className={css.deleteStatus} role="status">{t('delete.pending')}</div>}
         {deleteError !== null && <div className={css.renameError} role="alert">{deleteError}</div>}
+      </Modal>
+      <Modal
+        open={defaultSkillTarget !== null}
+        onClose={closeDefaultSkill}
+        closeLabel={t('close')}
+        title={t('defaultSkill.title')}
+        description={t('defaultSkill.description')}
+        footer={(
+          <>
+            <Button variant="outline" disabled={defaultSkillBusy} onClick={closeDefaultSkill}>{t('cancel')}</Button>
+            <Button variant="outline" disabled={defaultSkillBusy || defaultSkillLoading} onClick={clearDefaultSkill}>
+              {t('defaultSkill.clear')}
+            </Button>
+            <Button variant="primary" disabled={defaultSkillBusy || defaultSkillLoading} onClick={confirmDefaultSkill}>
+              {t('save')}
+            </Button>
+          </>
+        )}
+      >
+        {defaultSkillLoading && <div className={css.deleteStatus} role="status">{t('defaultSkill.loading')}</div>}
+        {!defaultSkillLoading && defaultSkillOptions.length === 0 && defaultSkillTarget !== null && (
+          <div className={css.empty}>{t('defaultSkill.empty')}</div>
+        )}
+        {!defaultSkillLoading && defaultSkillOptions.length > 0 && (
+          <ul className={css.defaultSkillList}>
+            {defaultSkillOptions.map(entry => (
+              <li key={entry.name} className={css.defaultSkillItem}>
+                <label className={css.defaultSkillLabel}>
+                  <input
+                    type="checkbox"
+                    checked={defaultSkillDraft.includes(entry.name)}
+                    disabled={defaultSkillBusy}
+                    onChange={() => toggleDefaultSkill(entry.name)}
+                  />
+                  <span className={css.defaultSkillName}>{entry.name}</span>
+                  {entry.description
+                    ? <span className={css.defaultSkillDescription}>{entry.description}</span>
+                    : null}
+                </label>
+              </li>
+            ))}
+          </ul>
+        )}
+        {defaultSkillError !== null && <div className={css.renameError} role="alert">{defaultSkillError}</div>}
       </Modal>
     </div>
   )

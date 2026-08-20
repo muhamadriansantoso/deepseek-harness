@@ -212,4 +212,17 @@ export class TestWorkspaces implements IWorkspaces {
       draft.archivedSessionIds = [...draft.archivedSessionIds, sessionId]
     })
   }
+
+  /**
+   * Replaces a workspace's default skill set (recorded; default no-op). An
+   * empty array clears all defaults.
+   * @param workspaceId - target workspace.
+   * @param defaultSkills - skill names to set, in order; `[]` clears.
+   */
+  async setDefaultSkills(workspaceId: WorkspaceId, defaultSkills: readonly string[]): Promise<WorkspaceView> {
+    this.calls.push({ method: 'setDefaultSkills', args: [workspaceId, defaultSkills] })
+    const stub = this.stubs.get('setDefaultSkills')
+    if (stub !== undefined) return await (stub(workspaceId, defaultSkills) as Promise<WorkspaceView>)
+    return { workspaceId, title: '', path: '', sessionIds: [], defaultSkills: [] } as unknown as WorkspaceView
+  }
 }

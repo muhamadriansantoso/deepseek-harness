@@ -474,6 +474,7 @@ export class WorkspaceRegistry extends Service {
         sessionIds: [],
         createdAt: now,
         updatedAt: now,
+        defaultSkills: [],
         ...owner === undefined ? {} : { owner },
       }
       : {
@@ -482,6 +483,7 @@ export class WorkspaceRegistry extends Service {
         sessionIds: [],
         createdAt: now,
         updatedAt: now,
+        defaultSkills: [],
         remote,
         // A remote workspace is owned by the hub account that attached the
         // laptop folder (remote.userId); stamp it so per-user scoping matches.
@@ -651,6 +653,7 @@ export class WorkspaceRegistry extends Service {
           sessionIds,
           createdAt,
           updatedAt: createdAt,
+          defaultSkills: [],
         }
         await table.put(id, record)
         byPath.set(group.path, id)

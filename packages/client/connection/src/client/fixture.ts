@@ -46,6 +46,11 @@ function rpcRequest<P>(payload: P): RpcRequest<P> {
   return { rpcId: RpcId(randomUuid()), payload }
 }
 
+/** Order-sensitive array equality for the setDefaultSkills no-op guard. */
+function arrayEquals(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((name, index) => name === b[index])
+}
+
 function text(t: string): ContentBlock[] {
   return [{ type: 'text', text: t }]
 }
@@ -1558,6 +1563,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
     sessionIds: [sid('fx-alpha'), sid('fx-beta'), sid('fx-gamma')],
     createdAt: fixtureEpoch,
     updatedAt: fixtureEpoch,
+    defaultSkills: [],
   }]
   let nextWorkspace = 1
   // Registry-global archive set mirroring the host: archived sessions keep
@@ -2580,6 +2586,7 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           sessionIds: [],
           createdAt: now,
           updatedAt: now,
+          defaultSkills: [],
         }
         workspaces.unshift(created)
         emitHost({ type: 'host/workspace-changed', workspace: { ...created } })
@@ -2693,6 +2700,24 @@ function createFixtureWorld(options: FixtureOptions): FixtureWorld {
           emitHost({ type: 'host/archived-sessions-changed', archivedSessionIds: [...archivedSessionIds] })
         }
         return ok(request, { archivedSessionIds: [...archivedSessionIds] })
+      },
+      setDefaultSkills: (request) => {
+        const { workspaceId, defaultSkills } = request.payload
+        const workspace = workspaces.find(w => w.workspaceId === workspaceId)
+        if (workspace === undefined) {
+          return err(request, {
+            code: 'workspace-not-found',
+            message: `no workspace ${workspaceId}`,
+            details: { workspaceId },
+          })
+        }
+        const normalized = [...new Set(defaultSkills.map(name => name.trim()).filter(name => name !== ''))]
+        if (!arrayEquals(workspace.defaultSkills ?? [], normalized)) {
+          workspace.defaultSkills = normalized
+          workspace.updatedAt = new Date().toISOString()
+          emitHost({ type: 'host/workspace-changed', workspace: { ...workspace } })
+        }
+        return ok(request, { workspace: { ...workspace } })
       },
     },
     agentPresets: {
@@ -3105,6 +3130,7 @@ export class FixtureApiClient extends AbstractApiClient {
       case 'workspace.insertBefore': return this.api.workspace.insertBefore(request)
       case 'workspace.insertSessionBefore': return this.api.workspace.insertSessionBefore(request)
       case 'workspace.archiveSession': return this.api.workspace.archiveSession(request)
+      case 'workspace.setDefaultSkills': return this.api.workspace.setDefaultSkills(request)
       case 'skill.list': return this.api.skills.list(request)
       case 'agentPreset.list': return this.api.agentPresets.list(request)
       case 'agentPreset.select': return this.api.agentPresets.select(request)

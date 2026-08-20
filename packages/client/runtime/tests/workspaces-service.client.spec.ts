@@ -12,7 +12,7 @@ const wid = (id: string): WorkspaceId => id as WorkspaceId
 function workspace(id: string, sessionIds: SessionId[] = [], createdAt = '2026-01-01T00:00:00.000Z'): WorkspaceView {
   return {
     workspaceId: wid(id), path: `/w/${id}`, title: id, sessionIds,
-    createdAt, updatedAt: createdAt,
+    createdAt, updatedAt: createdAt, defaultSkills: [],
   }
 }
 

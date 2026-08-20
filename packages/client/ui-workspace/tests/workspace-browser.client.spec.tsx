@@ -37,6 +37,7 @@ const sessionState = (items: readonly SessionSummary[], overrides: Partial<Sessi
 const workspace = (id: string, sessionIds: string[], title = id): WorkspaceView => ({
   workspaceId: wid(id), path: `/projects/${id}`, title,
   sessionIds: sessionIds.map(sid), createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+  defaultSkills: [],
 })
 const workspaceState = (items: readonly WorkspaceView[], archivedSessionIds: readonly SessionId[] = []): WorkspaceListState => ({
   items, archivedSessionIds, state: 'idle', phase: 'ready', error: null, baselinesReady: true,
@@ -79,6 +80,8 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     insertWorkspaceBefore: vi.fn(async () => {}),
     insertSessionBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
+    fetchSkills: vi.fn(async () => []),
+    setDefaultSkills: vi.fn(async () => workspace('ws', [])),
     useDirectoryFlow: bindSnapshotSelector({ getSnapshot: () => true, subscribe: () => () => {} }),
     renderSlot: ((_name: string, owner: { open: boolean }) => (owner.open ? <div data-testid="directory-flow" /> : null)) as never,
     t,
@@ -1119,6 +1122,45 @@ describe('WorkspaceBrowser', () => {
     fireEvent.click(screen.getByRole('button', { name: '关闭' }))
     expect(deleteWorkspace).not.toHaveBeenCalled()
     expect(screen.queryByRole('dialog', { name: '删除工作区' })).toBeNull()
+  })
+
+  it('default-skills dialog lists checkboxes and saves the selected set', async () => {
+    const setDefaultSkills = vi.fn(async () => workspace('alpha', []))
+    const skill = (name: string, description = '') => ({ name, description, modelInvocable: true })
+    mount({
+      useWorkspaces: hook(workspaceState([workspace('alpha', ['alpha-s'], 'Alpha')])),
+      setDefaultSkills,
+      fetchSkills: vi.fn(async () => [skill('code-review', 'Review code'), skill('commit-helper', 'Help commit')]),
+    })
+    fireEvent.click(screen.getByRole('button', { name: '工作区“Alpha”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '默认技能' }))
+    expect(screen.getByRole('dialog', { name: '设置默认技能' })).toBeTruthy()
+    // Both skills render as checkboxes; none checked yet (await the async fetch).
+    const boxes = (await screen.findAllByRole('checkbox')) as HTMLInputElement[]
+    expect(boxes).toHaveLength(2)
+    expect(boxes.every(box => box.checked)).toBe(false)
+    // Select both, then save.
+    fireEvent.click(boxes[0] as HTMLInputElement)
+    fireEvent.click(boxes[1] as HTMLInputElement)
+    fireEvent.click(screen.getByRole('button', { name: '保存' }))
+    await waitFor(() => expect(setDefaultSkills).toHaveBeenCalledWith('alpha', ['code-review', 'commit-helper']))
+  })
+
+  it('default-skills dialog clears all defaults', async () => {
+    const setDefaultSkills = vi.fn(async () => workspace('alpha', []))
+    const skill = (name: string, description = '') => ({ name, description, modelInvocable: true })
+    mount({
+      useWorkspaces: hook(workspaceState([{ ...workspace('alpha', ['alpha-s'], 'Alpha'), defaultSkills: ['code-review'] }])),
+      setDefaultSkills,
+      fetchSkills: vi.fn(async () => [skill('code-review', 'Review code')]),
+    })
+    fireEvent.click(screen.getByRole('button', { name: '工作区“Alpha”的操作' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '默认技能' }))
+    // The saved default is pre-checked (await the async fetch).
+    const box = await screen.findByRole('checkbox') as HTMLInputElement
+    expect(box.checked).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '清除默认技能' }))
+    await waitFor(() => expect(setDefaultSkills).toHaveBeenCalledWith('alpha', []))
   })
 
   it('search hides drag affordances (rows are not draggable during search)', () => {

@@ -111,6 +111,22 @@ export interface Workspace {
   readonly owner: string | undefined
 
   /**
+   * Skill names auto-loaded for every session in this workspace, in
+   * selection order. The host resolves and injects each skill body into the
+   * session context without an explicit `skill` tool call; an empty array
+   * means no defaults.
+   */
+  readonly defaultSkills: readonly string[]
+
+  /**
+   * Replace the workspace's default skill names durably. An empty array
+   * clears all defaults.
+   * @param names - Skill names to auto-load, in order; `[]` clears.
+   * @returns resolution after durability.
+   */
+  setDefaultSkills(names: readonly string[]): Promise<void>
+
+  /**
    * Stamp the owning userId durably. Used to lazily adopt a legacy
    * (owner-less) record into the first authenticated user who mutates it.
    * Idempotent when the owner is already set to `userId`.

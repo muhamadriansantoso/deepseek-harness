@@ -324,6 +324,20 @@ export class WorkspaceRuntime implements IWorkspaces {
   }
 
   /**
+   * Replaces a Workspace's default skill set; an empty array clears all
+   * defaults. When set, the Host auto-loads each skill body into every
+   * session in the Workspace without an explicit `skill` tool call.
+   * @param workspaceId - target workspace.
+   * @param defaultSkills - skill names to auto-load, in order; `[]` clears.
+   * @returns the updated Workspace view.
+   */
+  async setDefaultSkills(workspaceId: WorkspaceId, defaultSkills: readonly string[]): Promise<WorkspaceView> {
+    const result = await this.manager.setDefaultSkills(workspaceId, defaultSkills)
+    if (!result.ok) throw new Error(`workspace default skills failed: ${result.error.code}: ${result.error.message}`)
+    return result.value.workspace
+  }
+
+  /**
    * Refresh the workspace baseline, reusing an in-flight pull.
    * @returns completion of the current or newly started workspace baseline pull.
    */

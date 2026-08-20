@@ -481,6 +481,49 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* Default skills checkbox list (replaces the single <select> that was
+   unreadable on dark theme). */
+.defaultSkillList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.defaultSkillItem {
+  border-radius: 6px;
+}
+
+.defaultSkillItem:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.defaultSkillLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+}
+
+.defaultSkillName {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.defaultSkillDescription {
+  flex: 1 1 auto;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
 .deleteAction:not(:disabled) {
   color: var(--dsw-alias-state-error-primary);
 }

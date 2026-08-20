@@ -151,21 +151,24 @@ export class FakeApiClient implements IApiClient {
   readonly workspace: IApiClient['workspace'] = {
     list: (payload: unknown) => this.record('workspace.list', payload, Promise.resolve(ok({ items: [], archivedSessionIds: [] }))),
     create: (payload: unknown) => this.record('workspace.create', payload, Promise.resolve(ok({
-      workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0' },
+      workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0', defaultSkills: [] },
       created: true,
     }))),
     rename: (payload: unknown) => this.record('workspace.rename', payload, Promise.resolve(ok({
-      workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0' },
+      workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0', defaultSkills: [] },
     }))),
     delete: (payload: unknown) => this.record('workspace.delete', payload, Promise.resolve(ok({ deleted: true as const }))),
     insertBefore: (payload: unknown) => this.record('workspace.insertBefore', payload, Promise.resolve(ok({
       workspaceIds: [(payload as { workspaceId: WorkspaceId }).workspaceId],
     }))),
     insertSessionBefore: (payload: unknown) => this.record('workspace.insertSessionBefore', payload, Promise.resolve(ok({
-      workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0' },
+      workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0', defaultSkills: [] },
     }))),
     archiveSession: (payload: unknown) => this.record('workspace.archiveSession', payload, Promise.resolve(ok({
       archivedSessionIds: [(payload as { sessionId: SessionId }).sessionId],
+    }))),
+    setDefaultSkills: (payload: unknown) => this.record('workspace.setDefaultSkills', payload, Promise.resolve(ok({
+      workspace: { workspaceId: 'fk-ws' as never, path: '/f/ws', title: 'ws', sessionIds: [], createdAt: '0', updatedAt: '0', defaultSkills: [] },
     }))),
   }
 

@@ -91,4 +91,12 @@ export interface IWorkspaces {
    * @param sessionId - session to archive.
    */
   archiveSession(sessionId: SessionId): Promise<void>
+  /**
+   * Replaces a Workspace's default skill set; an empty array clears all
+   * defaults. When set, the Host auto-loads each skill body into every
+   * session in the Workspace without an explicit `skill` tool call.
+   * @param workspaceId - target workspace.
+   * @param defaultSkills - skill names to auto-load, in order; `[]` clears.
+   */
+  setDefaultSkills(workspaceId: WorkspaceId, defaultSkills: readonly string[]): Promise<WorkspaceView>
 }
